@@ -58,25 +58,32 @@ export async function process(summary, tracks) {
   const dir = summary.dir;
   const wavPaths = [];
 
-  // 1+2. 話者ごとに wav 化 → 文字起こし
+  // 1+2. 話者ごとに wav 化 → 文字起こし。
+  // 長尺(1〜2時間)×複数話者は逐次で処理してピークメモリを抑える。
+  // 1 話者の wav 化や STT が失敗しても、その話者だけスキップして他は救う
+  // (以前は pcmToWav が try の外にあり、1 トラック失敗で議事録全体が生成されなかった)。
   const perSpeaker = [];
   for (const t of tracks) {
     const wavPath = join(dir, `${t.userId}.wav`);
-    await pcmToWav(t.pcmPath, wavPath);
-    wavPaths.push(wavPath);
 
-    let result;
+    let text;
+    let engine = getProviderName();
     try {
-      result = await transcribe(wavPath, { language: 'ja' });
+      await pcmToWav(t.pcmPath, wavPath);
+      wavPaths.push(wavPath);
+      const result = await transcribe(wavPath, { language: 'ja' });
+      text = result.text.trim();
+      engine = result.engine;
     } catch (err) {
-      result = { text: `（文字起こし失敗: ${err.message}）`, segments: [], engine: getProviderName() };
+      console.error(`[pipeline] speaker failed user=${t.userId}: ${err.message}`);
+      text = `（文字起こし失敗: ${err.message}）`;
     }
     perSpeaker.push({
       userId: t.userId,
       displayName: t.displayName,
       durationSec: t.durationSec,
-      text: result.text.trim(),
-      engine: result.engine,
+      text,
+      engine,
     });
   }
 
