@@ -1,0 +1,18 @@
+name: gitleaks
+
+# push / PR のたびに秘密情報スキャン。ローカルフック未導入の環境でも必ず検査する番人。
+on:
+  push:
+  pull_request:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 全履歴をスキャン
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml

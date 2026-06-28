@@ -1,0 +1,24 @@
+#!/bin/sh
+# pre-commit: ステージされた変更に秘密情報/実インフラ値が無いか gitleaks で検査。
+# 有効化: git config core.hooksPath .githooks  (またはリポの scripts/setup-hooks.sh)
+
+# 1) 実値入り設定ファイルを誤ってステージしていないか
+BLOCKED=$(git diff --cached --name-only | grep -E '(^|/)(\.env|\.dev\.vars|wrangler\.toml|fly\.toml)$' || true)
+if [ -n "$BLOCKED" ]; then
+  echo "✋ コミット中止: 実値を含む設定ファイルがステージされています:"
+  echo "$BLOCKED" | sed 's/^/   - /'
+  echo "   これらは .gitignore 対象です。テンプレは *.example をコミットしてください。"
+  exit 1
+fi
+
+# 2) gitleaks でステージ内容をスキャン
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --redact --config .gitleaks.toml
+  if [ $? -ne 0 ]; then
+    echo "✋ コミット中止: gitleaks が秘密情報を検出しました(上記)。"
+    exit 1
+  fi
+else
+  echo "⚠ gitleaks 未インストール。 brew install gitleaks を推奨(検査をスキップ)。"
+fi
+exit 0

@@ -1,0 +1,43 @@
+# gitleaks 設定 — 標準ルールを継承しつつ、このプロジェクト固有のパターンを追加。
+# pre-commit / pre-push / CI で共通利用する。
+[extend]
+useDefault = true
+
+[[rules]]
+id = "discord-bot-token"
+description = "Discord Bot Token"
+regex = '''[MNO][A-Za-z0-9_-]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}'''
+keywords = ["discord"]
+
+[[rules]]
+id = "openai-key"
+description = "OpenAI API Key"
+regex = '''sk-(proj-)?[A-Za-z0-9_-]{20,}'''
+keywords = ["sk-"]
+
+# 稼働インフラの実値(秘密ではないが、public化時に晒したくない)
+[[rules]]
+id = "deployed-worker-url"
+description = "Deployed Cloudflare Worker URL"
+regex = '''[a-z0-9-]+\.[a-z0-9-]+\.workers\.dev'''
+
+[[rules]]
+id = "cloudflare-d1-id"
+description = "Cloudflare D1 database_id (UUID in wrangler config)"
+regex = '''database_id\s*=\s*["'][0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}["']'''
+
+[allowlist]
+description = "テンプレ・例・プレースホルダ・誤検出を許可"
+regexes = [
+  '''YOUR_[A-Z_]+''',
+  '''example\.com''',
+  '''placeholder''',
+  # SQL の ON CONFLICT 構文(excluded.xxx)を generic-api-key が誤検出するのを抑制
+  '''excluded\.[a-z_]+''',
+]
+paths = [
+  '''.*\.example$''',
+  '''package-lock\.json$''',
+  # SQL を多く含むためコードを秘密と誤検出しやすい
+  '''web/src/db\.js$''',
+]

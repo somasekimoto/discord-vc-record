@@ -1,0 +1,15 @@
+#!/bin/sh
+# pre-push: push される全範囲を gitleaks でスキャン(コミットをすり抜けた秘密の最終防衛線)。
+
+if command -v gitleaks >/dev/null 2>&1; then
+  # 作業ツリー全体ではなくコミット履歴(これから push される分含む)を検査
+  gitleaks detect --redact --config .gitleaks.toml --log-opts="--all"
+  if [ $? -ne 0 ]; then
+    echo "✋ push 中止: gitleaks が履歴中に秘密情報を検出しました(上記)。"
+    echo "   検出箇所をコミットから除去してください(履歴に入っている場合は要書き換え)。"
+    exit 1
+  fi
+else
+  echo "⚠ gitleaks 未インストール。 brew install gitleaks を推奨(検査をスキップ)。"
+fi
+exit 0
