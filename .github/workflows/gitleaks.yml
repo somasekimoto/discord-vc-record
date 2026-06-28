@@ -16,3 +16,6 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITLEAKS_CONFIG: .gitleaks.toml
+          # gitleaks-action@v2 は PR スキャン時に GITHUB_TOKEN が必須。
+          # 未指定だと "GITHUB_TOKEN is now required to scan pull requests" で失敗する。
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
