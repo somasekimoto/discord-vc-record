@@ -9,13 +9,24 @@ primary_region = "nrt"  # 東京(必要に応じて変更)
   dockerfile = "Dockerfile"
 
 [env]
-  RECORDINGS_DIR = "/tmp/recordings"
+  # 録音/中間ファイルは永続ボリューム上に置く。
+  # /tmp はVM再起動(OOM・再デプロイ含む)で揮発し、長尺録音が丸ごと失われるため。
+  RECORDINGS_DIR = "/data/recordings"
   STT_PROVIDER = "openai"
+
+# 録音生PCMと中間wavを残す永続ボリューム。
+# 事前に作成しておくこと(README参照):
+#   flyctl volumes create vc_data --region nrt --size 10 -a YOUR_FLY_APP
+[mounts]
+  source = "vc_data"
+  destination = "/data"
 
 # HTTP サービスは公開しない（[http_service] は定義しない）。
 # 常時起動・単一インスタンスを維持する。
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "512mb"
+  # 長尺(1〜2時間)の録音は stop 後の wav 化 + STT チャンク分割 + アップロードで
+  # メモリを食う。512MB だと OOM Kill されて文字起こしが生成されない。2GB に引き上げる。
+  memory = "2048mb"
 
 # auto stop/start は無効（常駐させる）。min/max は deploy 時に --ha=false で 1 に固定。

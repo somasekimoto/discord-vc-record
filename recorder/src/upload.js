@@ -3,7 +3,7 @@
  *
  * INGEST_SECRET の Bearer で認証。WEB_BASE_URL が未設定ならスキップ(ローカル保存のみ)。
  */
-import { readFile } from 'node:fs/promises';
+import { openAsBlob } from 'node:fs';
 import { basename } from 'node:path';
 
 /**
@@ -21,16 +21,15 @@ export async function uploadToWeb(minutes, files) {
   const form = new FormData();
   form.set('meta', JSON.stringify({ ...minutes, startedBy: minutes.startedBy ?? null }));
 
-  const md = await readFile(files.mdPath);
-  form.set('transcript_md', new Blob([md], { type: 'text/markdown' }), 'transcript.md');
-  const js = await readFile(files.jsonPath);
-  form.set('transcript_json', new Blob([js], { type: 'application/json' }), 'transcript.json');
+  // openAsBlob はファイルを遅延読みする Blob を返す(全体をメモリに載せない)。
+  // 長尺×複数話者の wav を readFile で全読みすると、アップロード時にまた OOM しうる。
+  form.set('transcript_md', await openAsBlob(files.mdPath, { type: 'text/markdown' }), 'transcript.md');
+  form.set('transcript_json', await openAsBlob(files.jsonPath, { type: 'application/json' }), 'transcript.json');
 
   // 話者別 wav。ファイル名 <userId>.wav から userId を取り出して audio_<userId> で送る。
   for (const wav of files.wavPaths) {
     const userId = basename(wav).replace(/\.wav$/, '');
-    const buf = await readFile(wav);
-    form.set(`audio_${userId}`, new Blob([buf], { type: 'audio/wav' }), `${userId}.wav`);
+    form.set(`audio_${userId}`, await openAsBlob(wav, { type: 'audio/wav' }), `${userId}.wav`);
   }
 
   const res = await fetch(`${base}/ingest`, {

@@ -17,9 +17,11 @@ RUN npm ci --omit=dev
 # アプリ本体
 COPY src ./src
 
-# 録音の一時ファイル置き場（R2 アップロード後は不要、永続化しない）
-ENV RECORDINGS_DIR=/tmp/recordings
-RUN mkdir -p /tmp/recordings
+# 録音/中間ファイル置き場。本番では fly.toml の [mounts] で永続ボリュームを
+# /data にマウントし RECORDINGS_DIR=/data/recordings を渡す(VM再起動で揮発させない)。
+# 下記はボリューム未マウント時のフォールバック既定値。
+ENV RECORDINGS_DIR=/data/recordings
+RUN mkdir -p /data/recordings
 
 # Bot は HTTP を待ち受けない（Gateway 常駐）。
 CMD ["node", "src/index.js"]
