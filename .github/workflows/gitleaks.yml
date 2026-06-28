@@ -13,7 +13,9 @@ jobs:
         with:
           fetch-depth: 0 # 全履歴をスキャン
       - name: Run gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        # v3 は Node20→Node24 移行のみ(inputs/挙動の変更なし)。
+        # Node20 ランナーは 2026-09-16 に撤去され v2 は動かなくなるため v3 を使う。
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITLEAKS_CONFIG: .gitleaks.toml
           # gitleaks-action@v2 は PR スキャン時に GITHUB_TOKEN が必須。
