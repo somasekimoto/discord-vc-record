@@ -1,0 +1,14 @@
+node_modules/
+.env
+.env.local
+recorder/recordings/
+*.pcm
+*.wav
+.wrangler/
+dist/
+.DS_Store
+.dev.vars
+
+# 実値入り設定(テンプレは .example をコミット)
+web/wrangler.toml
+recorder/fly.toml

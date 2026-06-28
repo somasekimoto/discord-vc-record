@@ -1,0 +1,21 @@
+name = "YOUR_WORKER_NAME"
+main = "src/index.js"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+# 文字起こし・音声ファイルの保管
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "YOUR_BUCKET"
+
+# セッション/参加者/ロール設定のメタデータ
+[[d1_databases]]
+binding = "DB"
+database_name = "YOUR_DB"
+database_id = "YOUR_D1_DATABASE_ID"
+
+# 公開しない設定値は `wrangler secret put` で登録する:
+#   DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, SESSION_SECRET, INGEST_SECRET
+[vars]
+# OAuth リダイレクト先のベース URL。deploy 後の workers.dev URL かカスタムドメインに設定。
+WEB_BASE_URL = "https://YOUR_WORKER.workers.dev"

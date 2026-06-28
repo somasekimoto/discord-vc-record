@@ -1,0 +1,24 @@
+{
+  "name": "discord-vc-recorder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Discord VC recorder bot (Fly.io). Records per-user tracks, transcribes, uploads to R2/D1.",
+  "scripts": {
+    "spike": "node src/spike.js",
+    "register": "node src/register-commands.js",
+    "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@discordjs/opus": "^0.10.0",
+    "@discordjs/voice": "0.19.2",
+    "@snazzah/davey": "^0.1.12",
+    "discord.js": "^14.26.4",
+    "dotenv": "^17.0.0",
+    "openai": "^6.45.0",
+    "prism-media": "^1.3.5"
+  }
+}

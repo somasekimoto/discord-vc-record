@@ -1,0 +1,21 @@
+# Fly.io 設定 — Discord 録音Bot
+# Bot は Discord Gateway への常駐クライアント(HTTP を待ち受けない)。
+# 複数インスタンスにすると同じイベントを二重処理して二重録音になるため、必ず単一インスタンス。
+
+app = "YOUR_FLY_APP"
+primary_region = "nrt"  # 東京(必要に応じて変更)
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  RECORDINGS_DIR = "/tmp/recordings"
+  STT_PROVIDER = "openai"
+
+# HTTP サービスは公開しない（[http_service] は定義しない）。
+# 常時起動・単一インスタンスを維持する。
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+# auto stop/start は無効（常駐させる）。min/max は deploy 時に --ha=false で 1 に固定。
