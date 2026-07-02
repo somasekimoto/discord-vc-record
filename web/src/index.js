@@ -170,8 +170,10 @@ export default {
         } else if (kind === 'json') {
           key = row.transcript_json_key; filename = 'transcript.json'; ctype = 'application/json';
         } else if (kind.startsWith('audio-')) {
+          // キーは慣習で再構築せず、取り込み時に確定した tracks.r2_key を正とする
           const userId = kind.slice('audio-'.length);
-          key = `sessions/${row.guild_id}/${sessionId}/audio/${userId}.wav`;
+          const tracks = await getTracks(env.DB, sessionId);
+          key = tracks.find((t) => t.user_id === userId)?.r2_key ?? null;
           filename = `${userId}.wav`; ctype = 'audio/wav';
         } else {
           return new Response('bad kind', { status: 400 });

@@ -25,6 +25,8 @@ async function withRetry(label, fn) {
     } catch (err) {
       lastErr = err;
       console.error(`[upload] ${label} failed (attempt ${attempt}/${MAX_ATTEMPTS}): ${err.message}`);
+      // 4xx は再送しても結果が変わらない(408/429 は一時的なので除く)
+      if (err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429) break;
       if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, 2000 * attempt));
     }
   }
@@ -32,8 +34,24 @@ async function withRetry(label, fn) {
 }
 
 async function expectOk(res, label) {
-  if (!res.ok) throw new Error(`${label} ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  if (!res.ok) {
+    const err = new Error(`${label} ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    err.status = res.status;
+    throw err;
+  }
   return res;
+}
+
+/** offset から length バイトを必ず読み切る。fh.read は1回で埋まる保証がない。 */
+async function readExact(fh, length, offset) {
+  const buf = Buffer.alloc(length);
+  let done = 0;
+  while (done < length) {
+    const { bytesRead } = await fh.read(buf, done, length - done, offset + done);
+    if (bytesRead === 0) throw new Error(`unexpected EOF at ${offset + done} (want ${length} bytes)`);
+    done += bytesRead;
+  }
+  return buf;
 }
 
 /** meta + 文字起こし(md/json)だけを /ingest に送る。音声は別途。 */
@@ -75,8 +93,7 @@ async function uploadWav(base, secret, sessionId, wavPath, durationSec) {
     for (let i = 0; i < totalParts; i++) {
       const partNumber = i + 1;
       const length = Math.min(PART_SIZE, size - i * PART_SIZE);
-      const buf = Buffer.alloc(length);
-      await fh.read(buf, 0, length, i * PART_SIZE);
+      const buf = await readExact(fh, length, i * PART_SIZE);
       const part = await withRetry(`audio part ${userId} ${partNumber}/${totalParts}`, async () => {
         const res = await fetch(`${base}/ingest/audio/part?${q({ uploadId, partNumber })}`, {
           method: 'PUT',

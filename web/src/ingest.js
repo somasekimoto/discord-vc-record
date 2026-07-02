@@ -9,7 +9,6 @@
  *   - meta:      JSON(セッション/参加者/トラック情報。transcript.json 相当)
  *   - transcript_md:  file (任意)
  *   - transcript_json: file (任意)
- *   - audio_<userId>: file (任意, wav)
  *
  * 音声は Cloudflare のリクエストボディ上限(100MB)に収まらないことがあるため、
  * /ingest には添付せず R2 マルチパートで分割アップロードする:
@@ -18,6 +17,11 @@
  *   POST /ingest/audio/complete  {sessionId, userId, uploadId, parts, durationSec} → tracks.r2_key 更新
  *   POST /ingest/audio/abort     {sessionId, userId, uploadId}
  * いずれも /ingest で meta を登録済みのセッションにのみ受け付ける。
+ *
+ * complete は冪等: 完了済み uploadId で再送されても、オブジェクトが存在すれば 200 を返す
+ * (recorder はレスポンス喪失時に complete をリトライするため)。
+ * recorder がクラッシュして abort されなかったマルチパートは、R2 バケット既定の
+ * ライフサイクル(incomplete multipart を7日で自動破棄)に掃除を任せる。
  */
 import { upsertSession, insertParticipants, insertTracks } from './db.js';
 
@@ -30,6 +34,23 @@ function checkIngestAuth(req, env) {
   return Boolean(env.INGEST_SECRET) && auth === `Bearer ${env.INGEST_SECRET}`;
 }
 
+// R2 の仕様上パート番号は 1..10000
+const MAX_PART_NUMBER = 10000;
+
+// userId は R2 キーに補間されるため Discord snowflake(数字のみ)に限定し、
+// sessionId も `/` 等でキー階層を壊せない文字種に限定する
+const isValidUserId = (s) => typeof s === 'string' && /^\d{1,32}$/.test(s);
+const isValidSessionId = (s) => typeof s === 'string' && /^[\w.-]{1,128}$/.test(s);
+
+/** req.json() の失敗を 500 でなく 400 にするため null に落とす。 */
+async function readJson(req) {
+  try {
+    return await req.json();
+  } catch {
+    return null;
+  }
+}
+
 /** sessionId から R2 の音声キーを組み立てる。セッション未登録なら null。 */
 async function audioKeyFor(env, sessionId, userId) {
   const row = await env.DB.prepare('SELECT guild_id FROM sessions WHERE id = ?').bind(sessionId).first();
@@ -37,16 +58,27 @@ async function audioKeyFor(env, sessionId, userId) {
   return `sessions/${row.guild_id}/${sessionId}/audio/${userId}.wav`;
 }
 
-export async function handleAudioInit(req, env) {
-  if (!checkIngestAuth(req, env)) return unauthorized();
-  const { sessionId, userId } = await req.json();
-  if (!sessionId || !userId) return new Response('missing sessionId/userId', { status: 400 });
+/** 共通の入力検証 + キー導出。失敗時は Response、成功時は { key } を返す。 */
+async function resolveAudioKey(env, sessionId, userId) {
+  if (!isValidSessionId(sessionId) || !isValidUserId(userId)) {
+    return new Response('invalid sessionId/userId', { status: 400 });
+  }
   const key = await audioKeyFor(env, sessionId, userId);
   if (!key) return new Response('unknown session (POST /ingest first)', { status: 404 });
-  const upload = await env.BUCKET.createMultipartUpload(key, {
+  return { key };
+}
+
+export async function handleAudioInit(req, env) {
+  if (!checkIngestAuth(req, env)) return unauthorized();
+  const body = await readJson(req);
+  if (!body) return new Response('invalid json', { status: 400 });
+  const { sessionId, userId } = body;
+  const r = await resolveAudioKey(env, sessionId, userId);
+  if (r instanceof Response) return r;
+  const upload = await env.BUCKET.createMultipartUpload(r.key, {
     httpMetadata: { contentType: 'audio/wav' },
   });
-  return Response.json({ key, uploadId: upload.uploadId });
+  return Response.json({ key: r.key, uploadId: upload.uploadId });
 }
 
 export async function handleAudioPart(req, env) {
@@ -56,40 +88,63 @@ export async function handleAudioPart(req, env) {
   const userId = url.searchParams.get('userId');
   const uploadId = url.searchParams.get('uploadId');
   const partNumber = Number(url.searchParams.get('partNumber'));
-  if (!sessionId || !userId || !uploadId || !Number.isInteger(partNumber) || partNumber < 1) {
+  if (!uploadId || !Number.isInteger(partNumber) || partNumber < 1 || partNumber > MAX_PART_NUMBER) {
     return new Response('missing/invalid params', { status: 400 });
   }
   if (!req.body) return new Response('missing body', { status: 400 });
-  const key = await audioKeyFor(env, sessionId, userId);
-  if (!key) return new Response('unknown session', { status: 404 });
-  const upload = env.BUCKET.resumeMultipartUpload(key, uploadId);
-  const part = await upload.uploadPart(partNumber, req.body);
-  return Response.json({ partNumber: part.partNumber, etag: part.etag });
+  const r = await resolveAudioKey(env, sessionId, userId);
+  if (r instanceof Response) return r;
+  const upload = env.BUCKET.resumeMultipartUpload(r.key, uploadId);
+  try {
+    const part = await upload.uploadPart(partNumber, req.body);
+    return Response.json({ partNumber: part.partNumber, etag: part.etag });
+  } catch (err) {
+    // 不正/失効した uploadId 等。リトライで直らないのでサーバエラーにしない
+    return new Response(`upload part failed: ${err.message}`, { status: 400 });
+  }
 }
 
 export async function handleAudioComplete(req, env) {
   if (!checkIngestAuth(req, env)) return unauthorized();
-  const { sessionId, userId, uploadId, parts, durationSec } = await req.json();
-  if (!sessionId || !userId || !uploadId || !Array.isArray(parts) || parts.length === 0) {
+  const body = await readJson(req);
+  if (!body) return new Response('invalid json', { status: 400 });
+  const { sessionId, userId, uploadId, parts, durationSec } = body;
+  if (!uploadId || !Array.isArray(parts) || parts.length === 0 || parts.length > MAX_PART_NUMBER) {
     return new Response('missing fields', { status: 400 });
   }
-  const key = await audioKeyFor(env, sessionId, userId);
-  if (!key) return new Response('unknown session', { status: 404 });
-  const upload = env.BUCKET.resumeMultipartUpload(key, uploadId);
-  await upload.complete(parts.map((p) => ({ partNumber: p.partNumber, etag: p.etag })));
+  const r = await resolveAudioKey(env, sessionId, userId);
+  if (r instanceof Response) return r;
+  const upload = env.BUCKET.resumeMultipartUpload(r.key, uploadId);
+  let alreadyCompleted = false;
+  try {
+    await upload.complete(parts.map((p) => ({ partNumber: p.partNumber, etag: p.etag })));
+  } catch (err) {
+    // complete 成功後にレスポンスが失われて recorder がリトライしてくるケース。
+    // オブジェクトが既に存在していれば完了扱い(冪等)、なければクライアント起因。
+    if (!(await env.BUCKET.head(r.key))) {
+      return new Response(`complete failed: ${err.message}`, { status: 400 });
+    }
+    alreadyCompleted = true;
+  }
   await insertTracks(env.DB, sessionId, [
-    { user_id: userId, r2_key: key, duration_sec: durationSec ?? null },
+    { user_id: userId, r2_key: r.key, duration_sec: durationSec ?? null },
   ]);
-  return Response.json({ ok: true, key });
+  return Response.json({ ok: true, key: r.key, alreadyCompleted });
 }
 
 export async function handleAudioAbort(req, env) {
   if (!checkIngestAuth(req, env)) return unauthorized();
-  const { sessionId, userId, uploadId } = await req.json();
-  if (!sessionId || !userId || !uploadId) return new Response('missing fields', { status: 400 });
-  const key = await audioKeyFor(env, sessionId, userId);
-  if (!key) return new Response('unknown session', { status: 404 });
-  await env.BUCKET.resumeMultipartUpload(key, uploadId).abort();
+  const body = await readJson(req);
+  if (!body) return new Response('invalid json', { status: 400 });
+  const { sessionId, userId, uploadId } = body;
+  if (!uploadId) return new Response('missing fields', { status: 400 });
+  const r = await resolveAudioKey(env, sessionId, userId);
+  if (r instanceof Response) return r;
+  try {
+    await env.BUCKET.resumeMultipartUpload(r.key, uploadId).abort();
+  } catch {
+    // 既に complete/abort 済みなど。abort は冪等に扱う
+  }
   return Response.json({ ok: true });
 }
 
@@ -124,19 +179,11 @@ export async function handleIngest(req, env) {
     });
   }
 
-  // 音声(話者別 wav)を R2 へ
-  const trackRows = [];
-  for (const speaker of meta.speakers || []) {
-    const file = form.get(`audio_${speaker.userId}`);
-    let r2Key = null;
-    if (file && typeof file !== 'string') {
-      r2Key = `${prefix}/audio/${speaker.userId}.wav`;
-      await env.BUCKET.put(r2Key, file.stream(), {
-        httpMetadata: { contentType: 'audio/wav' },
-      });
-    }
-    trackRows.push({ user_id: speaker.userId, r2_key: r2Key, duration_sec: speaker.durationSec });
-  }
+  // トラック行を先に作る(r2_key は音声の complete 時に埋まる)。
+  // 旧仕様の audio_<userId> 添付は受け付けない(100MB超で必ず 413 になるため廃止)。
+  const trackRows = (meta.speakers || []).map((speaker) => ({
+    user_id: speaker.userId, r2_key: null, duration_sec: speaker.durationSec,
+  }));
 
   // メタデータを D1 へ
   await upsertSession(env.DB, {
