@@ -21,6 +21,9 @@
  *  9. 認証なし → 401
  * 10. 不正 guildId の meta → 400
  * 11. 不正な parts 要素の complete → 400
+ * 12. SMOKE_BIG=1 のとき: 実運用サイズ(40MiB×2 + 25MiB = 計105MiB > Cloudflare
+ *     ボディ上限100MB)をチャンク分割で通す。単一リクエストでは不可能なサイズが
+ *     分割なら通ることと、等サイズパート則(最終パートのみ小)の遵守を実寸で検証
  */
 const BASE = process.env.SMOKE_BASE_URL || 'http://127.0.0.1:8788';
 const SECRET = process.env.SMOKE_INGEST_SECRET || 'smoke-test-secret';
@@ -144,6 +147,36 @@ res = await fetch(`${BASE}/ingest/audio/complete`, {
   body: JSON.stringify({ sessionId: SID, userId: UID, uploadId: 'whatever', parts: [{ partNumber: 'x', etag: 1 }] }),
 });
 check('complete invalid parts 400', res.status === 400, `status=${res.status}`);
+
+// 12. 実運用サイズ(計105MiB, 3パート)。recorder の PART_SIZE=40MiB と同じ分割
+if (process.env.SMOKE_BIG === '1') {
+  const UID2 = '876543210987654321';
+  res = await fetch(`${BASE}/ingest/audio/init`, {
+    method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: SID, userId: UID2 }),
+  });
+  check('big init 200', res.status === 200, `status=${res.status}`);
+  const big = await res.json();
+
+  const MIB = 1024 * 1024;
+  const bigParts = [];
+  for (const [i, size] of [40 * MIB, 40 * MIB, 25 * MIB].entries()) {
+    const q2 = new URLSearchParams({ sessionId: SID, userId: UID2, uploadId: big.uploadId, partNumber: String(i + 1) });
+    res = await fetch(`${BASE}/ingest/audio/part?${q2}`, {
+      method: 'PUT', headers: { ...AUTH, 'Content-Type': 'application/octet-stream' },
+      body: new Uint8Array(size).fill(i + 1),
+    });
+    check(`big part ${i + 1} (${size / MIB}MiB) 200`, res.status === 200, `status=${res.status} ${await res.clone().text()}`);
+    bigParts.push(await res.json());
+  }
+
+  res = await fetch(`${BASE}/ingest/audio/complete`, {
+    method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: SID, userId: UID2, uploadId: big.uploadId, parts: bigParts, durationSec: 6300 }),
+  });
+  const cb = await res.json().catch(() => ({}));
+  check('big complete 200 (105MiB total)', res.status === 200 && cb.ok === true, JSON.stringify(cb));
+}
 
 console.log(failed ? `\n${failed} FAILED` : '\nALL SMOKE TESTS PASSED');
 process.exit(failed ? 1 : 0);
