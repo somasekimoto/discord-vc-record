@@ -37,10 +37,19 @@ function checkIngestAuth(req, env) {
 // R2 の仕様上パート番号は 1..10000
 const MAX_PART_NUMBER = 10000;
 
-// userId は R2 キーに補間されるため Discord snowflake(数字のみ)に限定し、
+// guildId/userId は R2 キーに補間されるため Discord snowflake(数字のみ)に限定し、
 // sessionId も `/` 等でキー階層を壊せない文字種に限定する
-const isValidUserId = (s) => typeof s === 'string' && /^\d{1,32}$/.test(s);
+const isSnowflake = (s) => typeof s === 'string' && /^\d{1,32}$/.test(s);
 const isValidSessionId = (s) => typeof s === 'string' && /^[\w.-]{1,128}$/.test(s);
+
+/**
+ * R2 の例外がクライアント起因(リトライで直らない)かの粗い分類。
+ * R2 は HTTP ステータスを露出しないためメッセージで判定する。
+ * 判定できないものは 500 のままにして recorder 側のリトライに委ねる。
+ */
+const isR2ClientError = (err) =>
+  /does not exist|no such upload|not found|invalid|malformed|etag|already|too (small|large|many)/i
+    .test(err?.message || '');
 
 /** req.json() の失敗を 500 でなく 400 にするため null に落とす。 */
 async function readJson(req) {
@@ -60,7 +69,7 @@ async function audioKeyFor(env, sessionId, userId) {
 
 /** 共通の入力検証 + キー導出。失敗時は Response、成功時は { key } を返す。 */
 async function resolveAudioKey(env, sessionId, userId) {
-  if (!isValidSessionId(sessionId) || !isValidUserId(userId)) {
+  if (!isValidSessionId(sessionId) || !isSnowflake(userId)) {
     return new Response('invalid sessionId/userId', { status: 400 });
   }
   const key = await audioKeyFor(env, sessionId, userId);
@@ -99,8 +108,10 @@ export async function handleAudioPart(req, env) {
     const part = await upload.uploadPart(partNumber, req.body);
     return Response.json({ partNumber: part.partNumber, etag: part.etag });
   } catch (err) {
-    // 不正/失効した uploadId 等。リトライで直らないのでサーバエラーにしない
-    return new Response(`upload part failed: ${err.message}`, { status: 400 });
+    // 不正/失効した uploadId 等のクライアント起因のみ 400。
+    // R2 の一時的な内部エラーは 500 のまま返し recorder のリトライに委ねる
+    if (isR2ClientError(err)) return new Response(`upload part failed: ${err.message}`, { status: 400 });
+    throw err;
   }
 }
 
@@ -112,6 +123,10 @@ export async function handleAudioComplete(req, env) {
   if (!uploadId || !Array.isArray(parts) || parts.length === 0 || parts.length > MAX_PART_NUMBER) {
     return new Response('missing fields', { status: 400 });
   }
+  if (!parts.every((p) => Number.isInteger(p?.partNumber) && p.partNumber >= 1
+      && p.partNumber <= MAX_PART_NUMBER && typeof p?.etag === 'string')) {
+    return new Response('invalid parts', { status: 400 });
+  }
   const r = await resolveAudioKey(env, sessionId, userId);
   if (r instanceof Response) return r;
   const upload = env.BUCKET.resumeMultipartUpload(r.key, uploadId);
@@ -119,10 +134,14 @@ export async function handleAudioComplete(req, env) {
   try {
     await upload.complete(parts.map((p) => ({ partNumber: p.partNumber, etag: p.etag })));
   } catch (err) {
-    // complete 成功後にレスポンスが失われて recorder がリトライしてくるケース。
-    // オブジェクトが既に存在していれば完了扱い(冪等)、なければクライアント起因。
+    // complete 成功後にレスポンスが失われて recorder がリトライしてくるケースを冪等に救う。
+    // キーは (sessionId, userId) 毎に決定的で uploadId を持たないため、この判定は
+    // 「このuploadIdが完了した」ではなく「キーにオブジェクトが存在する」の近似。
+    // 過去アップロード済みのトラックを reupload 中に新しい complete が本当に失敗した
+    // 場合も 200 になりうるが、同一話者wavの同一キーなので実害は取り置きの旧データに留まる。
     if (!(await env.BUCKET.head(r.key))) {
-      return new Response(`complete failed: ${err.message}`, { status: 400 });
+      if (isR2ClientError(err)) return new Response(`complete failed: ${err.message}`, { status: 400 });
+      throw err;
     }
     alreadyCompleted = true;
   }
@@ -154,10 +173,18 @@ export async function handleIngest(req, env) {
   const form = await req.formData();
   const metaRaw = form.get('meta');
   if (!metaRaw) return new Response('missing meta', { status: 400 });
-  const meta = JSON.parse(typeof metaRaw === 'string' ? metaRaw : await metaRaw.text());
+  let meta;
+  try {
+    meta = JSON.parse(typeof metaRaw === 'string' ? metaRaw : await metaRaw.text());
+  } catch {
+    return new Response('invalid meta json', { status: 400 });
+  }
 
+  // audio エンドポイントと同じ検証。sessionId/guildId はここが R2 キー階層の起点になる
   const sessionId = meta.sessionId;
-  if (!sessionId) return new Response('missing sessionId', { status: 400 });
+  if (!isValidSessionId(sessionId) || !isSnowflake(meta.guildId)) {
+    return new Response('invalid sessionId/guildId', { status: 400 });
+  }
 
   const prefix = `sessions/${meta.guildId}/${sessionId}`;
   let transcriptKey = null;
