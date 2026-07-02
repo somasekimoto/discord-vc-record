@@ -116,10 +116,15 @@ export async function insertParticipants(db, sessionId, participants) {
 }
 
 export async function insertTracks(db, sessionId, tracks) {
+  // r2_key/duration_sec は「新しい値が null なら既存値を残す」。
+  // 音声は /ingest の meta 登録後に別途アップロードされるため、meta の再送で
+  // アップロード済みの r2_key を null で潰さないようにする。
   const stmt = db.prepare(
     `INSERT INTO tracks (id, session_id, user_id, r2_key, duration_sec)
      VALUES (?,?,?,?,?)
-     ON CONFLICT(id) DO UPDATE SET r2_key=excluded.r2_key, duration_sec=excluded.duration_sec`,
+     ON CONFLICT(id) DO UPDATE SET
+       r2_key=COALESCE(excluded.r2_key, r2_key),
+       duration_sec=COALESCE(excluded.duration_sec, duration_sec)`,
   );
   const batch = tracks.map((t) =>
     stmt.bind(`${sessionId}:${t.user_id}`, sessionId, t.user_id, t.r2_key ?? null, t.duration_sec ?? null),
