@@ -13,7 +13,7 @@
  */
 import { getSession, handleLogin, handleCallback, handleLogout } from './auth.js';
 import { canAccessGuild } from './authz.js';
-import { handleIngest } from './ingest.js';
+import { handleIngest, handleAudioInit, handleAudioPart, handleAudioComplete, handleAudioAbort } from './ingest.js';
 import { listGuildsWithSessions, listChannels, listSessions, getSession as getSessionRow, getParticipants, getTracks, setRequiredRole } from './db.js';
 
 const html = (body, title = 'VC Record') =>
@@ -56,6 +56,10 @@ export default {
       if (path === '/callback') return handleCallback(req, env);
       if (path === '/logout') return handleLogout();
       if (path === '/ingest' && req.method === 'POST') return handleIngest(req, env);
+      if (path === '/ingest/audio/init' && req.method === 'POST') return handleAudioInit(req, env);
+      if (path === '/ingest/audio/part' && req.method === 'PUT') return handleAudioPart(req, env);
+      if (path === '/ingest/audio/complete' && req.method === 'POST') return handleAudioComplete(req, env);
+      if (path === '/ingest/audio/abort' && req.method === 'POST') return handleAudioAbort(req, env);
 
       // recorder の /setup から呼ばれる: ギルドの閲覧ロールを保存(INGEST_SECRET 認証)
       if (path === '/config' && req.method === 'POST') {
@@ -166,8 +170,10 @@ export default {
         } else if (kind === 'json') {
           key = row.transcript_json_key; filename = 'transcript.json'; ctype = 'application/json';
         } else if (kind.startsWith('audio-')) {
+          // キーは慣習で再構築せず、取り込み時に確定した tracks.r2_key を正とする
           const userId = kind.slice('audio-'.length);
-          key = `sessions/${row.guild_id}/${sessionId}/audio/${userId}.wav`;
+          const tracks = await getTracks(env.DB, sessionId);
+          key = tracks.find((t) => t.user_id === userId)?.r2_key ?? null;
           filename = `${userId}.wav`; ctype = 'audio/wav';
         } else {
           return new Response('bad kind', { status: 400 });

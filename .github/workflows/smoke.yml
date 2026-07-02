@@ -1,0 +1,63 @@
+# web の取り込みフローE2Eスモーク。wrangler dev(ローカルのD1/R2エミュレーション)相手に
+# meta ingest → R2マルチパート(init/part/complete/abort)と各エラー経路を検証する。
+# SMOKE_BIG=1 で実運用サイズ(計105MiB > Cloudflareボディ上限)の分割アップロードも通す。
+name: smoke
+on:
+  pull_request:
+    paths: ['web/**', '.github/workflows/smoke.yml']
+  push:
+    branches: [main]
+    paths: ['web/**', '.github/workflows/smoke.yml']
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      # wrangler.toml は非コミット(実IDを含むため)。ローカルモードなら実IDは不要なので
+      # CI用の最小構成を生成する
+      - name: Generate CI wrangler.toml
+        run: |
+          cat > wrangler.toml <<'EOF'
+          name = "discord-vc-record-web-ci"
+          main = "src/index.js"
+          compatibility_date = "2026-06-01"
+          compatibility_flags = ["nodejs_compat"]
+
+          [[r2_buckets]]
+          binding = "BUCKET"
+          bucket_name = "vc-record"
+
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "vc-record"
+          database_id = "00000000-0000-0000-0000-000000000000" # gitleaks:allow ダミーID(ローカルモードでは未使用)
+          EOF
+      - name: Apply schema to local D1
+        run: npx wrangler d1 execute vc-record --local --file=schema.sql
+      - name: Start wrangler dev
+        run: |
+          npx wrangler dev --port 8788 --var INGEST_SECRET:smoke-test-secret > wrangler-dev.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf -o /dev/null http://127.0.0.1:8788/ && exit 0
+            sleep 1
+          done
+          echo "wrangler dev did not become ready" >&2
+          cat wrangler-dev.log >&2
+          exit 1
+      - name: Run smoke tests
+        run: SMOKE_BIG=1 node test/smoke.mjs
+      - name: Show worker log on failure
+        if: failure()
+        run: cat wrangler-dev.log
