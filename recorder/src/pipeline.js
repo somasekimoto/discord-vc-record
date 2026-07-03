@@ -70,7 +70,7 @@ function fmtClock(ms) {
 }
 
 /** セッション開始からの経過時間を m:ss / h:mm:ss で整形する。 */
-function fmtOffset(ms) {
+export function fmtOffset(ms) {
   const total = Math.max(0, Math.round(ms / 1000));
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
@@ -82,7 +82,7 @@ function fmtOffset(ms) {
  * 近接する発話区間を結合し、短すぎる区間を除く。
  * 入力は同一話者の時刻昇順(= PCM 内バイト位置も昇順)であることが前提。
  */
-function mergeUtterances(utterances) {
+export function mergeUtterances(utterances) {
   const merged = [];
   for (const u of utterances) {
     const last = merged[merged.length - 1];
