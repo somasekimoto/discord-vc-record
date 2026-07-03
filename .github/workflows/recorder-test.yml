@@ -1,0 +1,28 @@
+# recorder のテスト(node:test)。ユニット(発話区間の結合・整形)と、
+# 擬似PCM+モックSTTでの pipeline 統合テストを実行する。
+# 統合テストは wav 切り出しに ffmpeg を使うためインストールする。
+name: recorder-test
+on:
+  pull_request:
+    paths: ['recorder/**', '.github/workflows/recorder-test.yml']
+  push:
+    branches: [main]
+    paths: ['recorder/**', '.github/workflows/recorder-test.yml']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: recorder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: recorder/package-lock.json
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: npm ci
+      - run: npm test

@@ -10,6 +10,7 @@
 import { createWriteStream } from 'node:fs';
 import { mkdir, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import {
   joinVoiceChannel,
@@ -67,6 +68,10 @@ export class RecordingSession {
     this.participants = new Map();
     // 進行中のストリーム pipeline の完了 Promise 群(stop 時に待つ)
     this.pendingPipelines = new Set();
+    // userId -> { bytes, utterances, current }
+    // PCM には発話部分だけが連結されて無音が潰れるため、ファイル内位置と実時刻の
+    // 対応はここで記録しないと復元できない。utterances が時系列議事録の根拠になる。
+    this.trackStates = new Map();
   }
 
   /** VC に接続して録音を開始する。 */
@@ -121,6 +126,7 @@ export class RecordingSession {
     }
 
     this.receiver.speaking.on('start', (userId) => this._onSpeakingStart(userId));
+    this.receiver.speaking.on('end', (userId) => this._onSpeakingEnd(userId));
     return this.id;
   }
 
@@ -134,9 +140,29 @@ export class RecordingSession {
    */
   _onSpeakingStart(userId) {
     if (this.status !== 'recording') return;
-    if (this.activeStreams.has(userId)) return; // 既に購読中(=この呼び出しは無視)
-    this.activeStreams.add(userId);
+    if (!this.activeStreams.has(userId)) {
+      this.activeStreams.add(userId);
+      this._subscribe(userId);
+    }
 
+    // 発話区間を開く(時系列議事録のための実時刻と PCM 内位置)。
+    // speaking start は同一発話中にも再発火しうるので、開いている間は無視する。
+    const st = this.trackStates.get(userId);
+    if (st && !st.current) {
+      st.current = { startedAt: Date.now(), byteStart: st.bytes };
+    }
+  }
+
+  _onSpeakingEnd(userId) {
+    const st = this.trackStates.get(userId);
+    if (!st?.current) return;
+    // byteEnd 時点で decoder 内に未 flush の残り(高々数フレーム=数十ms)がありうるが、
+    // pipeline 側が切り出し時に前後パディングするので実用上問題ない。
+    st.utterances.push({ ...st.current, endedAt: Date.now(), byteEnd: st.bytes });
+    st.current = null;
+  }
+
+  _subscribe(userId) {
     // 喋った=参加者。スナップショットに無ければ途中参加として記録。
     if (!this.participants.has(userId)) {
       this._markJoined(userId, this.resolveName(userId));
@@ -152,10 +178,21 @@ export class RecordingSession {
     });
     const out = createWriteStream(join(this.dir, `${userId}.pcm`), { flags: 'a' });
 
+    // 書き込み済みバイト数を発話区間の根拠として数える。
+    // decoder の出力はフレーム単位(サンプル境界)なので bytes は常にフレーム境界に揃う。
+    const st = { bytes: 0, utterances: [], current: null };
+    this.trackStates.set(userId, st);
+    const counter = new Transform({
+      transform(chunk, _enc, cb) {
+        st.bytes += chunk.length;
+        cb(null, chunk);
+      },
+    });
+
     // 後で stop() から明示的に終了できるよう保持
     this.subscriptions.set(userId, opusStream);
 
-    const p = pipeline(opusStream, decoder, out)
+    const p = pipeline(opusStream, decoder, counter, out)
       .catch((err) => {
         console.error(`[recorder] stream error user=${userId}: ${err.message}`);
       })
@@ -213,6 +250,14 @@ export class RecordingSession {
     // 進行中のストリーム書き込み完了を待つ
     await Promise.allSettled([...this.pendingPipelines]);
 
+    // 発話中のまま stop された区間を確定する(bytes は flush 完了後の最終値)
+    for (const st of this.trackStates.values()) {
+      if (st.current) {
+        st.utterances.push({ ...st.current, endedAt: this.endedAt, byteEnd: st.bytes });
+        st.current = null;
+      }
+    }
+
     if (this.connection) {
       this.connection.destroy();
       this.connection = null;
@@ -243,6 +288,8 @@ export class RecordingSession {
         pcmPath: full,
         bytes: size,
         durationSec: Math.round(durationSec),
+        // 発話区間(実時刻+PCM内バイト位置)。pipeline が時系列議事録の構築に使う
+        utterances: this.trackStates.get(userId)?.utterances ?? [],
       });
     }
     return tracks;
