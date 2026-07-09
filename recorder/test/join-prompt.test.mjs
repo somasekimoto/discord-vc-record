@@ -9,31 +9,41 @@ import { JoinPromptNotifier, parsePromptChannelIds } from '../src/join-prompt.js
 const TARGET = 'vc-1';
 const GUILD = 'guild-1';
 
-/** discord.js の VoiceState 相当の最小フェイクを組む */
+/**
+ * discord.js の VoiceState 相当の最小フェイクを組む。
+ * others: 入室者以外の在室者。{ bot, resolved } で Bot / member未解決(キャッシュ漏れ)を表す。
+ */
 function makeStates({
   channelId = TARGET,
   oldChannelId = null,
   bot = false,
-  memberCount = 1, // 入室後の VC 内の人間の数(本人含む)
+  others = [],
   sent = [],
 } = {}) {
-  const humans = Array.from({ length: memberCount }, (_, i) => ({ user: { bot: false }, id: `u${i}` }));
-  const members = {
+  const states = [
+    { channelId, id: 'u0', member: { user: { bot } } }, // 入室者本人(イベント発火時点で在室扱い)
+    ...others.map((o, i) => ({
+      channelId,
+      id: `u${i + 1}`,
+      member: o.resolved === false ? null : { user: { bot: o.bot ?? false } },
+    })),
+  ];
+  const cache = {
     filter: (fn) => {
-      const arr = humans.filter(fn);
+      const arr = states.filter(fn);
       return { size: arr.length };
     },
   };
   const channel = {
     id: channelId,
-    members,
     send: async (msg) => {
       sent.push(msg);
     },
   };
   const member = { user: { bot }, displayName: 'テスト太郎' };
-  const oldState = { channelId: oldChannelId, guild: { id: GUILD }, member };
-  const newState = { channelId, channel, guild: { id: GUILD }, member, id: 'u0' };
+  const guild = { id: GUILD, voiceStates: { cache } };
+  const oldState = { channelId: oldChannelId, guild, member };
+  const newState = { channelId, channel, guild, member, id: 'u0' };
   return { oldState, newState, sent };
 }
 
@@ -87,7 +97,29 @@ test('録音中は投稿しない', async () => {
 
 test('既に他の人がいるVCへの入室では投稿しない', async () => {
   const notifier = makeNotifier();
-  const { oldState, newState, sent } = makeStates({ memberCount: 2 });
+  const { oldState, newState, sent } = makeStates({ others: [{}] });
+  assert.equal(await notifier.handleVoiceState(oldState, newState), false);
+  assert.equal(sent.length, 0);
+});
+
+test('member未解決(キャッシュ漏れ)の在室者がいる場合も投稿しない(誤通知より抑制に倒す)', async () => {
+  const notifier = makeNotifier();
+  const { oldState, newState, sent } = makeStates({ others: [{ resolved: false }] });
+  assert.equal(await notifier.handleVoiceState(oldState, newState), false);
+  assert.equal(sent.length, 0);
+});
+
+test('在室者がBotだけなら最初の入室者として投稿する', async () => {
+  const notifier = makeNotifier();
+  const { oldState, newState, sent } = makeStates({ others: [{ bot: true }] });
+  assert.equal(await notifier.handleVoiceState(oldState, newState), true);
+  assert.equal(sent.length, 1);
+});
+
+test('対象VCがキャッシュに無い場合は投稿しない', async () => {
+  const notifier = makeNotifier();
+  const { oldState, newState, sent } = makeStates();
+  newState.channel = null;
   assert.equal(await notifier.handleVoiceState(oldState, newState), false);
   assert.equal(sent.length, 0);
 });
@@ -107,14 +139,20 @@ test('クールダウン中は再投稿せず、経過後は再び投稿する',
   assert.equal(await notifier.handleVoiceState(third.oldState, third.newState), true);
 });
 
-test('send が失敗しても例外を投げない', async () => {
-  const notifier = makeNotifier();
-  const { oldState, newState } = makeStates();
-  newState.channel.send = async () => {
+test('send 失敗時は false を返し、クールダウンが戻って次の入室で再試行される', async () => {
+  const nowValue = { t: 0 };
+  const notifier = makeNotifier({ cooldownMs: 1000, nowValue });
+  const first = makeStates();
+  first.newState.channel.send = async () => {
     throw new Error('missing permission');
   };
-  // 投稿を試みたので true(クールダウンは記録される)
-  assert.equal(await notifier.handleVoiceState(oldState, newState), true);
+  assert.equal(await notifier.handleVoiceState(first.oldState, first.newState), false);
+
+  // 失敗した投稿はクールダウンを消費しない(一時的エラーで5分沈黙しない)
+  nowValue.t = 1;
+  const second = makeStates();
+  assert.equal(await notifier.handleVoiceState(second.oldState, second.newState), true);
+  assert.equal(second.sent.length, 1);
 });
 
 test('parsePromptChannelIds: カンマ区切り・空白・空要素を処理する', () => {
