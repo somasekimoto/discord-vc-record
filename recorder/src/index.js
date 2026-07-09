@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path';
 import { Client, GatewayIntentBits, MessageFlags } from 'discord.js';
 import { SessionManager } from './recorder.js';
 import { process as runPipeline } from './pipeline.js';
+import { JoinPromptNotifier, parsePromptChannelIds } from './join-prompt.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RECORDINGS_DIR = process.env.RECORDINGS_DIR ?? join(__dirname, '..', 'recordings');
@@ -27,6 +28,15 @@ const client = new Client({
 
 const sessions = new SessionManager({ client, baseDir: RECORDINGS_DIR });
 
+// 指定 VC への入室時に /rec start を促す(未設定なら無効)
+const promptChannelIds = parsePromptChannelIds(process.env.RECORD_PROMPT_CHANNEL_IDS);
+const joinPrompt = promptChannelIds.length
+  ? new JoinPromptNotifier({ channelIds: promptChannelIds, sessions })
+  : null;
+if (joinPrompt) {
+  console.log(`[bot] join prompt enabled for channels: ${promptChannelIds.join(', ')}`);
+}
+
 client.once('clientReady', () => {
   console.log(`[bot] logged in as ${client.user.tag}`);
 });
@@ -34,6 +44,9 @@ client.once('clientReady', () => {
 // VC への参加/退出を録音中セッションへ流す(participants の根拠)
 client.on('voiceStateUpdate', (oldState, newState) => {
   sessions.routeVoiceState(oldState, newState);
+  joinPrompt?.handleVoiceState(oldState, newState).catch((err) => {
+    console.error('[bot] join prompt error:', err);
+  });
 });
 
 client.on('interactionCreate', async (interaction) => {

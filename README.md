@@ -47,6 +47,7 @@ npm run start          # Bot起動
 | `GUILD_ID` | テスト用ギルドID（即時登録／省略でグローバル） |
 | `OPENAI_API_KEY` | STT（gpt-4o-transcribe） |
 | `STT_PROVIDER` | `openai`（既定）。将来 `local`（faster-whisper） |
+| `RECORD_PROMPT_CHANNEL_IDS` | 入室時に `/rec start` を促すVCのID（カンマ区切りで複数可、任意） |
 
 ## コマンド
 
@@ -54,6 +55,11 @@ npm run start          # Bot起動
 - `/rec stop` — 録音終了 → 文字起こし
 - `/rec status` — 録音状況
 - `/setup role:<ロール>` — 閲覧を許可するロールを設定（管理者のみ）
+
+`RECORD_PROMPT_CHANNEL_IDS` を設定すると、対象VCに最初の1人が入室したときにVC内チャットへ `/rec start` を促すメッセージを投稿する（録音中はスキップ、同一VCへの再通知は5分クールダウン）。Botに対象VCへの「メッセージ送信」権限が必要。
+
+- 「最初の1人」判定は voiceStates ベースの best-effort。member 未解決の在室者は人間扱いし、誤通知より通知抑制に倒す
+- 設定が env var なのは、recorder が D1 を読むパスを持たない現状での MVP 判断。ギルド管理者がセルフサービスで変えたくなったら `/setup` → D1 への移行を検討
 
 ## web のセットアップ（Cloudflare）
 
