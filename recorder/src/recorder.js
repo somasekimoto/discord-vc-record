@@ -133,10 +133,13 @@ export class RecordingSession {
   /**
    * 話し始めたユーザーを per-user トラックへ録音する。
    *
-   * 重要: 1ユーザーにつき購読は **セッション中1回だけ**。
+   * 重要: 1ユーザーにつき購読は **同時に1つだけ**。
    * EndBehaviorType.Manual で stop まで開けっ放しにする。
    * AfterSilence で発話ごとに購読を切ると、再購読のたびに先頭が欠け、
    * 会話全体で大量の取りこぼしが起きる(=文字起こしが極端に短くなる)ため。
+   *
+   * ただしストリームがエラー終了した場合(DAVE 遷移中の復号失敗が opus デコード
+   * エラーになる等)は例外で、次の speaking start で再購読して録音を継続する。
    */
   _onSpeakingStart(userId) {
     if (this.status !== 'recording') return;
@@ -180,8 +183,13 @@ export class RecordingSession {
 
     // 書き込み済みバイト数を発話区間の根拠として数える。
     // decoder の出力はフレーム単位(サンプル境界)なので bytes は常にフレーム境界に揃う。
-    const st = { bytes: 0, utterances: [], current: null };
-    this.trackStates.set(userId, st);
+    // エラー後の再購読では既存 state を引き継ぐ。PCM は追記(flags:'a')なので、
+    // bytes を 0 に戻すと過去の utterances のバイト位置が壊れる。
+    let st = this.trackStates.get(userId);
+    if (!st) {
+      st = { bytes: 0, utterances: [], current: null };
+      this.trackStates.set(userId, st);
+    }
     const counter = new Transform({
       transform(chunk, _enc, cb) {
         st.bytes += chunk.length;
@@ -198,7 +206,23 @@ export class RecordingSession {
       })
       .finally(() => {
         this.pendingPipelines.delete(p);
-        this.subscriptions.delete(userId);
+        if (this.subscriptions.get(userId) === opusStream) this.subscriptions.delete(userId);
+        // ここを消さないと、一度ストリームが死んだユーザーはセッション終了まで
+        // 二度と録音されない(録音開始前から在室していた人の声が丸ごと欠ける原因)。
+        const wasActive = this.activeStreams.delete(userId);
+        // 発話バーストの途中でエラー終了した場合、speaking start はバースト境界
+        // でしか再発火しないため、本人がまだ喋っていれば少し待って自前で再購読する。
+        // (待つのは、復号失敗が続く間の再購読ループを抑えるため)
+        if (wasActive && this.status === 'recording') {
+          const t = setTimeout(() => {
+            if (this.status === 'recording' && !this.activeStreams.has(userId)
+              && this.receiver?.speaking.users.has(userId)) {
+              console.log(`[recorder] resubscribe user=${userId} (still speaking after stream error)`);
+              this._onSpeakingStart(userId);
+            }
+          }, 200);
+          t.unref?.();
+        }
       });
     this.pendingPipelines.add(p);
   }
