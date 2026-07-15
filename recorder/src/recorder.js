@@ -7,7 +7,7 @@
  * Phase 1 ではローカル FS への PCM 保存までを担当する。
  * R2/D1 アップロードと STT は pipeline.js (Phase 2) が録音終了後に処理する。
  */
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, statSync } from 'node:fs';
 import { mkdir, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Transform } from 'node:stream';
@@ -24,6 +24,13 @@ import prism from 'prism-media';
 
 // 48kHz / stereo / 16bit。Discord の opus 出力に合わせる(spike で確認済み)。
 export const PCM_FORMAT = { sampleRate: 48000, channels: 2, bitsPerSample: 16 };
+
+// ストリームエラー後の自動再購読の初回待ち時間。opus 10 フレーム(20ms×10)分で、
+// 瞬間的な復号失敗をやり過ごしつつ、発話中の取りこぼしを最小に抑える値。
+// 失敗が続く間(長引く DAVE 再ネゴ等)は指数バックオフで最大値まで伸ばし、
+// 購読→即死→再購読のループがログを埋めないようにする。
+export const RESUBSCRIBE_DELAY_MS = 200;
+export const RESUBSCRIBE_DELAY_MAX_MS = 5_000;
 
 /**
  * 1 つの録音セッション。1 つの VC につき最大 1 つ。
@@ -179,7 +186,7 @@ export class RecordingSession {
       channels: PCM_FORMAT.channels,
       frameSize: 960,
     });
-    const out = createWriteStream(join(this.dir, `${userId}.pcm`), { flags: 'a' });
+    const pcmPath = join(this.dir, `${userId}.pcm`);
 
     // 書き込み済みバイト数を発話区間の根拠として数える。
     // decoder の出力はフレーム単位(サンプル境界)なので bytes は常にフレーム境界に揃う。
@@ -187,12 +194,24 @@ export class RecordingSession {
     // bytes を 0 に戻すと過去の utterances のバイト位置が壊れる。
     let st = this.trackStates.get(userId);
     if (!st) {
-      st = { bytes: 0, utterances: [], current: null };
+      st = { bytes: 0, utterances: [], current: null, streamErrors: 0 };
       this.trackStates.set(userId, st);
+    } else {
+      // エラー destroy では書き込みストリームの内部バッファ(最大数十ms分)が
+      // 未書き込みのまま捨てられ、st.bytes が実ファイルサイズより先行しうる。
+      // バイト位置は時系列議事録の唯一の根拠なので、追記を再開する前に
+      // 実ファイルサイズへ再同期してズレが以降の全区間へ累積するのを防ぐ。
+      try {
+        st.bytes = statSync(pcmPath).size;
+      } catch {
+        st.bytes = 0; // 1 バイトも書かれる前に死んだ場合はファイル未作成
+      }
     }
+    const out = createWriteStream(pcmPath, { flags: 'a' });
     const counter = new Transform({
       transform(chunk, _enc, cb) {
         st.bytes += chunk.length;
+        st.streamErrors = 0; // データが流れた = 復号は回復している
         cb(null, chunk);
       },
     });
@@ -203,6 +222,15 @@ export class RecordingSession {
     const p = pipeline(opusStream, decoder, counter, out)
       .catch((err) => {
         console.error(`[recorder] stream error user=${userId}: ${err.message}`);
+        if (this.status !== 'recording') return; // stop() による destroy は失敗扱いしない
+        st.streamErrors += 1;
+        // 発話途中で死んだ場合はここで区間を閉じる。開いたままにすると、復旧までの
+        // 無記録ギャップ(PCM 0 バイトの時間)が 1 つの発話区間の中に含まれてしまう。
+        // 閉じておけば、ギャップは区間と区間の隙間として時系列に現れる。
+        if (st.current) {
+          st.utterances.push({ ...st.current, endedAt: Date.now(), byteEnd: st.bytes });
+          st.current = null;
+        }
       })
       .finally(() => {
         this.pendingPipelines.delete(p);
@@ -211,16 +239,22 @@ export class RecordingSession {
         // 二度と録音されない(録音開始前から在室していた人の声が丸ごと欠ける原因)。
         const wasActive = this.activeStreams.delete(userId);
         // 発話バーストの途中でエラー終了した場合、speaking start はバースト境界
-        // でしか再発火しないため、本人がまだ喋っていれば少し待って自前で再購読する。
-        // (待つのは、復号失敗が続く間の再購読ループを抑えるため)
+        // でしか再発火しないため、本人がまだ喋っていれば自前で再購読する。
+        // 連続失敗中は指数バックオフ(最大 RESUBSCRIBE_DELAY_MAX_MS)。
         if (wasActive && this.status === 'recording') {
+          const delay = Math.min(
+            RESUBSCRIBE_DELAY_MS * 2 ** Math.max(0, st.streamErrors - 1),
+            RESUBSCRIBE_DELAY_MAX_MS,
+          );
           const t = setTimeout(() => {
             if (this.status === 'recording' && !this.activeStreams.has(userId)
               && this.receiver?.speaking.users.has(userId)) {
-              console.log(`[recorder] resubscribe user=${userId} (still speaking after stream error)`);
+              console.log(
+                `[recorder] resubscribe user=${userId} (still speaking after stream error, fails=${st.streamErrors})`,
+              );
               this._onSpeakingStart(userId);
             }
-          }, 200);
+          }, delay);
           t.unref?.();
         }
       });
