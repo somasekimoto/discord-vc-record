@@ -43,13 +43,15 @@ export class RecordingSession {
    * @param {string} opts.channelId       録音対象の VC
    * @param {string} opts.startedByUserId  /record start を打った人
    * @param {string} opts.baseDir          録音ファイルの保存先ルート (例: ./recordings)
+   * @param {string} [opts.notifyChannelId] /rec start が打たれたテキストチャンネル(自動停止の通知先)
    * @param {(id:string)=>string} [opts.resolveName] userId -> 表示名
    */
-  constructor({ client, guildId, channelId, startedByUserId, baseDir, resolveName }) {
+  constructor({ client, guildId, channelId, startedByUserId, baseDir, notifyChannelId, resolveName }) {
     this.client = client;
     this.guildId = guildId;
     this.channelId = channelId;
     this.startedByUserId = startedByUserId;
+    this.notifyChannelId = notifyChannelId ?? null;
     this.resolveName = resolveName ?? ((id) => id);
 
     // sessionId はファイル名/URL に使うので衝突しにくい値にする。
@@ -384,7 +386,7 @@ export class SessionManager {
     return this.byGuild.get(guildId);
   }
 
-  async start({ guildId, channelId, startedByUserId, resolveName }) {
+  async start({ guildId, channelId, startedByUserId, notifyChannelId, resolveName }) {
     if (this.byGuild.has(guildId)) {
       throw new Error('このサーバーでは既に録音中です。先に /rec stop してください。');
     }
@@ -394,6 +396,7 @@ export class SessionManager {
       channelId,
       startedByUserId,
       baseDir: this.baseDir,
+      notifyChannelId,
       resolveName,
     });
     this.byGuild.set(guildId, session);
@@ -409,9 +412,11 @@ export class SessionManager {
   async stop(guildId) {
     const session = this.byGuild.get(guildId);
     if (!session) throw new Error('このサーバーで進行中の録音はありません。');
+    // await 前に登録を外す。停止経路(自動停止/ボタン/コマンド)が競合したとき、
+    // 後着を「進行中の録音なし」で確実に弾き、pipeline の二重実行を防ぐ。
+    this.byGuild.delete(guildId);
     const summary = await session.stop();
     const tracks = await session.listTracks();
-    this.byGuild.delete(guildId);
     return { summary, tracks, session };
   }
 
