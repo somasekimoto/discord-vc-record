@@ -5,7 +5,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SessionManager } from '../src/recorder.js';
+import { SessionManager, NoActiveSessionError } from '../src/recorder.js';
 
 /** stop に時間がかかる録音セッションのフェイク。 */
 function makeSlowSession() {
@@ -33,6 +33,7 @@ test('stop の同時呼び出しは先着だけが成功し、後着は「進行
   assert.equal(a.status, 'fulfilled');
   assert.equal(a.value.tracks.length, 1);
   assert.equal(b.status, 'rejected');
+  assert.ok(b.reason instanceof NoActiveSessionError); // 競合負けは typed error で判定できる
   assert.match(b.reason.message, /進行中の録音はありません/);
   assert.equal(session.stopCalls, 1); // セッション自体の stop も1回だけ
   assert.equal(mgr.byGuild.size, 0);

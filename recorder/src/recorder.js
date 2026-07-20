@@ -371,6 +371,18 @@ export class RecordingSession {
 }
 
 /**
+ * 進行中の録音が無いのに stop されたことを表すエラー。
+ * 停止経路(自動停止/ボタン/コマンド)の競合で後着になった場合もこれになる。
+ * 呼び出し側はメッセージ文字列ではなく instanceof で競合負けを判定する。
+ */
+export class NoActiveSessionError extends Error {
+  constructor() {
+    super('このサーバーで進行中の録音はありません。');
+    this.name = 'NoActiveSessionError';
+  }
+}
+
+/**
  * ギルド×チャンネル単位でセッションを管理するレジストリ。
  * MVP では「1 ギルドにつき同時 1 セッション」を基本とする。
  */
@@ -411,7 +423,7 @@ export class SessionManager {
 
   async stop(guildId) {
     const session = this.byGuild.get(guildId);
-    if (!session) throw new Error('このサーバーで進行中の録音はありません。');
+    if (!session) throw new NoActiveSessionError();
     // await 前に登録を外す。停止経路(自動停止/ボタン/コマンド)が競合したとき、
     // 後着を「進行中の録音なし」で確実に弾き、pipeline の二重実行を防ぐ。
     // トレードオフ: session.stop() が途中で失敗した場合も登録解除済みのため

@@ -144,14 +144,7 @@ export class AutoStopController {
       }
       this.timers.clearTimeout(state.timer);
       state.phase = 'extended';
-      state.timer = this.timers.setTimeout(
-        () =>
-          this._onExtensionExpired(guildId, state).catch((err) => {
-            console.error(`[auto-stop] extension timer error (guild=${guildId}): ${err.message}`);
-          }),
-        minutes * 60_000,
-      );
-      state.timer.unref?.();
+      this._armTimer(state, minutes * 60_000, () => this._onExtensionExpired(guildId, state));
       await interaction
         .update({
           content:
@@ -185,14 +178,7 @@ export class AutoStopController {
     // send の await 前に登録し、退出イベント連発での多重カウントダウンを防ぐ
     this.states.set(guildId, state);
     // タイマーを先に張る: プロンプト投稿に失敗しても自動停止(無人録音の垂れ流し防止)は生かす
-    state.timer = this.timers.setTimeout(
-      () =>
-        this._onCountdownExpired(guildId, state).catch((err) => {
-          console.error(`[auto-stop] countdown timer error (guild=${guildId}): ${err.message}`);
-        }),
-      this.emptyDelayMs,
-    );
-    state.timer.unref?.();
+    this._armTimer(state, this.emptyDelayMs, () => this._onCountdownExpired(guildId, state));
 
     const secs = Math.round(this.emptyDelayMs / 1000);
     try {
@@ -219,10 +205,16 @@ export class AutoStopController {
       this.states.delete(guildId);
       return;
     }
-    // 発火時点で無人かを再確認(入室イベント取りこぼしへの保険)。
-    // guild が取れず確認できない場合も、誤停止よりは停止抑制側に倒す。
+    // 発火時点で無人かを再確認(入室イベント取りこぼしへの保険)
     const guild = this.getGuild(guildId);
-    if (!guild || !this._isVcEmpty(guild, session.channelId)) {
+    if (!guild) {
+      // guild キャッシュミスで無人確認ができない。ここでキャンセルすると監視が
+      // 途切れ、本当に無人のとき録音が止まらなくなるため、停止はせず猶予ぶん
+      // 後の再確認へ張り直す(誤停止の抑制と無人録音の垂れ流し防止を両立)。
+      this._armTimer(state, this.emptyDelayMs, () => this._onCountdownExpired(guildId, state));
+      return;
+    }
+    if (!this._isVcEmpty(guild, session.channelId)) {
       await this._cancel(guildId, '▶ メンバーが VC に戻ったため、録音を継続します。');
       return;
     }
@@ -234,13 +226,29 @@ export class AutoStopController {
   async _onExtensionExpired(guildId, state) {
     if (this.states.get(guildId) !== state) return;
     const session = this.sessions.get(guildId);
-    this.states.delete(guildId);
-    if (!session || session.id !== state.sessionId) return;
-    // まだ無人なら新しいプロンプトを再送してカウントダウンをやり直す(再延長も可能)。
-    // 誰か戻っている・guild が取れず無人と確認できない場合は静かに解除(停止抑制側)。
+    if (!session || session.id !== state.sessionId) {
+      this.states.delete(guildId);
+      return;
+    }
     const guild = this.getGuild(guildId);
-    if (!guild || !this._isVcEmpty(guild, session.channelId)) return;
+    if (!guild) {
+      // 無人確認ができない間は延長状態のまま再確認を続ける(監視を途切れさせない)
+      this._armTimer(state, this.emptyDelayMs, () => this._onExtensionExpired(guildId, state));
+      return;
+    }
+    this.states.delete(guildId);
+    if (!this._isVcEmpty(guild, session.channelId)) return; // 誰か戻っている: 静かに解除
+    // まだ無人: 新しいプロンプトを再送してカウントダウンをやり直す(再延長も可能)
     await this._startCountdown(guildId, session);
+  }
+
+  /** state のタイマーを張り直す。コールバックの reject はログへ落とす。 */
+  _armTimer(state, ms, cb) {
+    state.timer = this.timers.setTimeout(
+      () => cb().catch((err) => console.error(`[auto-stop] timer error: ${err.message}`)),
+      ms,
+    );
+    state.timer.unref?.();
   }
 
   /** 進行中の確認状態を破棄し、プロンプトを編集してボタンを無効化する。 */

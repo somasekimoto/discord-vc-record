@@ -9,7 +9,7 @@ import 'dotenv/config';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Client, GatewayIntentBits, MessageFlags } from 'discord.js';
-import { SessionManager } from './recorder.js';
+import { SessionManager, NoActiveSessionError } from './recorder.js';
 import { process as runPipeline } from './pipeline.js';
 import { JoinPromptNotifier, parsePromptChannelIds } from './join-prompt.js';
 import { AutoStopController, parseEmptyDelayMs } from './auto-stop.js';
@@ -182,7 +182,7 @@ async function stopSessionSafe(guildId) {
   } catch (err) {
     // byGuild からの除去は stop() 冒頭で同期的に行われるため、このエラーは
     // 競合の後着を意味する。それ以外は本物の停止失敗として区別する。
-    if (err.message?.includes('進行中の録音はありません')) return null;
+    if (err instanceof NoActiveSessionError) return null;
     throw err;
   }
 }
