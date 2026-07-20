@@ -71,7 +71,15 @@ client.on('voiceStateUpdate', (oldState, newState) => {
 client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton() && interaction.customId.startsWith('autostop:')) {
     try {
-      await autoStop?.handleButton(interaction);
+      if (autoStop) {
+        await autoStop.handleButton(interaction);
+      } else {
+        // 機能無効化後に残った古いボタン。無応答だと「インタラクション失敗」表示になる
+        await interaction
+          .reply({ content: '自動停止機能は現在無効です。', flags: MessageFlags.Ephemeral })
+          .catch(() => {});
+        await interaction.message?.edit({ components: [] }).catch(() => {});
+      }
     } catch (err) {
       console.error('[bot] auto-stop button error:', err);
     }
@@ -147,12 +155,13 @@ async function handleRecord(interaction) {
   if (sub === 'stop') {
     await interaction.deferReply();
     const stopped = await stopSessionSafe(guildId);
+    // 出ているボタン付きメッセージを片付ける(競合負けで stopped が null の場合も)
+    await autoStop?.notifySessionEnded(guildId);
     if (!stopped) {
       // 自動停止と /rec stop が競合した場合もここに来る
       await interaction.editReply('現在このサーバーで録音は行われていません。');
       return;
     }
-    await autoStop?.notifySessionEnded(guildId); // 出ているボタン付きメッセージを片付ける
     const { summary, tracks } = stopped;
     await interaction.editReply(formatStopReport(tracks));
     if (tracks.length > 0) announcePipelineResult(summary, tracks, interaction.channel);
@@ -161,31 +170,43 @@ async function handleRecord(interaction) {
 }
 
 /**
- * 録音停止を冪等に行う。進行中の録音がなければ null。
- * 自動停止・ボタン・/rec stop が競合しても二重停止でエラーにしない。
+ * 録音停止を行う。進行中の録音がなければ null(停止経路の競合で後着になった場合を含む)。
+ * session.stop 自体の失敗はそのまま投げ、呼び出し元でユーザーへ表面化させる。
+ * 失敗時も PCM はディスクに残るが、wav/transcript 生成前のため reupload.js では
+ * 復旧できない(手動対応)。
  */
 async function stopSessionSafe(guildId) {
   if (!sessions.get(guildId)) return null;
   try {
     return await sessions.stop(guildId);
   } catch (err) {
-    // 競合の後着はここに来る。純粋な停止失敗でも録音データはディスクに残り
-    // reupload.js で復旧できるため、呼び出し元へは「停止済み」として扱わせる。
-    console.error(`[bot] stop error (guild=${guildId}):`, err.message);
-    return null;
+    // byGuild からの除去は stop() 冒頭で同期的に行われるため、このエラーは
+    // 競合の後着を意味する。それ以外は本物の停止失敗として区別する。
+    if (err.message?.includes('進行中の録音はありません')) return null;
+    throw err;
   }
 }
 
 /** 無人検知による自動停止(AutoStopController から呼ばれる)。通知は /rec start のチャンネルへ。 */
 async function autoStopSession(guildId) {
   const notifyChannelId = sessions.get(guildId)?.notifyChannelId;
-  const stopped = await stopSessionSafe(guildId);
+  const fetchNotifyChannel = async () =>
+    notifyChannelId ? await client.channels.fetch(notifyChannelId).catch(() => null) : null;
+
+  let stopped;
+  try {
+    stopped = await stopSessionSafe(guildId);
+  } catch (err) {
+    // interaction が無い経路なので、通知チャンネルへ失敗を表面化させる
+    console.error(`[bot] auto-stop failed (guild=${guildId}):`, err);
+    const channel = await fetchNotifyChannel();
+    await channel?.send(`⚠ 録音の自動停止に失敗しました: ${err.message}`).catch(() => {});
+    return;
+  }
   if (!stopped) return;
   console.log(`[bot] auto-stopped session for guild ${guildId}`);
   const { summary, tracks } = stopped;
-  const channel = notifyChannelId
-    ? await client.channels.fetch(notifyChannelId).catch(() => null)
-    : null;
+  const channel = await fetchNotifyChannel();
   await channel?.send(formatStopReport(tracks)).catch(() => {});
   if (tracks.length > 0) announcePipelineResult(summary, tracks, channel);
 }

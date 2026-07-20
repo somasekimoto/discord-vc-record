@@ -209,15 +209,20 @@ export class AutoStopController {
   }
 
   async _onCountdownExpired(guildId, state) {
-    if (this.states.get(guildId) !== state) return; // キャンセル/延長済み
+    if (this.states.get(guildId) !== state) return; // キャンセル済み
+    // 満了直前に延長ボタンが押された場合、このコールバックは既に実行キューに
+    // 積まれていて clearTimeout が効かない。state は in-place 更新なので同一性
+    // ガードでは判別できず、phase で「延長済み」を弾いて延長タイマーに任せる。
+    if (state.phase !== 'countdown') return;
     const session = this.sessions.get(guildId);
     if (!session || session.id !== state.sessionId) {
       this.states.delete(guildId);
       return;
     }
-    // 発火時点で無人かを再確認(入室イベント取りこぼしへの保険)
+    // 発火時点で無人かを再確認(入室イベント取りこぼしへの保険)。
+    // guild が取れず確認できない場合も、誤停止よりは停止抑制側に倒す。
     const guild = this.getGuild(guildId);
-    if (guild && !this._isVcEmpty(guild, session.channelId)) {
+    if (!guild || !this._isVcEmpty(guild, session.channelId)) {
       await this._cancel(guildId, '▶ メンバーが VC に戻ったため、録音を継続します。');
       return;
     }
@@ -231,9 +236,10 @@ export class AutoStopController {
     const session = this.sessions.get(guildId);
     this.states.delete(guildId);
     if (!session || session.id !== state.sessionId) return;
-    // まだ無人なら新しいプロンプトを再送してカウントダウンをやり直す(再延長も可能)
+    // まだ無人なら新しいプロンプトを再送してカウントダウンをやり直す(再延長も可能)。
+    // 誰か戻っている・guild が取れず無人と確認できない場合は静かに解除(停止抑制側)。
     const guild = this.getGuild(guildId);
-    if (guild && !this._isVcEmpty(guild, session.channelId)) return; // 誰か戻っている: 静かに解除
+    if (!guild || !this._isVcEmpty(guild, session.channelId)) return;
     await this._startCountdown(guildId, session);
   }
 

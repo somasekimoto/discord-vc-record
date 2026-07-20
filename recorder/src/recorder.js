@@ -414,6 +414,8 @@ export class SessionManager {
     if (!session) throw new Error('このサーバーで進行中の録音はありません。');
     // await 前に登録を外す。停止経路(自動停止/ボタン/コマンド)が競合したとき、
     // 後着を「進行中の録音なし」で確実に弾き、pipeline の二重実行を防ぐ。
+    // トレードオフ: session.stop() が途中で失敗した場合も登録解除済みのため
+    // /rec stop でのリトライはできない(PCM はディスクに残るので手動復旧は可能)。
     this.byGuild.delete(guildId);
     const summary = await session.stop();
     const tracks = await session.listTracks();
