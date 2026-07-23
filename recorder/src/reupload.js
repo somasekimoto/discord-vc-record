@@ -2,7 +2,8 @@
  * reupload.js — ローカル保存済みセッションを web へ再アップロードする
  *
  * アップロードだけ失敗した(413等)セッションの復旧用。
- * セッションディレクトリの transcript.json と <userId>.wav を読んで uploadToWeb を呼ぶ。
+ * セッションディレクトリの transcript.json と <userId>.wav(あれば mixed.m4a も)を
+ * 読んで uploadToWeb を呼ぶ。
  *
  * 使い方:
  *   node src/reupload.js <sessionId>
@@ -35,7 +36,14 @@ for (const s of minutes.speakers || []) {
   }
 }
 
-console.log(`[reupload] session=${minutes.sessionId} wavs=${wavPaths.length}`);
-const result = await uploadToWeb(minutes, { mdPath, jsonPath, wavPaths });
+let mixedPath = join(dir, 'mixed.m4a');
+try {
+  await stat(mixedPath);
+} catch {
+  mixedPath = null;
+}
+
+console.log(`[reupload] session=${minutes.sessionId} wavs=${wavPaths.length} mixed=${Boolean(mixedPath)}`);
+const result = await uploadToWeb(minutes, { mdPath, jsonPath, wavPaths, mixedPath });
 console.log(JSON.stringify(result, null, 2));
 process.exit(result.uploaded ? 0 : 1);

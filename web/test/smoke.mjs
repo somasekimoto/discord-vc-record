@@ -13,6 +13,7 @@
  *  1. meta先行 /ingest → 200
  *  2. init → part×2 (5MiB + 端数) → complete → 200, tracks.r2_key 更新
  *  3. complete 再送(レスポンス喪失リトライ想定) → 200 + alreadyCompleted
+ *  3.5 全体ミックス(userId="mixed") → キー audio/mixed.m4a で init/part/complete が通る
  *  4. 不正 userId (パス脱出) → 400
  *  5. 不正 JSON → 400
  *  6. 未知セッション init → 404
@@ -92,6 +93,30 @@ res = await fetch(`${BASE}/ingest/audio/complete`, {
 });
 const c2 = await res.json().catch(() => ({}));
 check('complete retry 200 (idempotent)', res.status === 200 && c2.alreadyCompleted === true, JSON.stringify(c2));
+
+// 3.5 全体ミックス(userId="mixed") → キーは audio/mixed.m4a
+res = await fetch(`${BASE}/ingest/audio/init`, {
+  method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ sessionId: SID, userId: 'mixed' }),
+});
+check('mixed init 200', res.status === 200, `status=${res.status}`);
+const mixed = await res.json();
+check('mixed key is audio/mixed.m4a', typeof mixed.key === 'string' && mixed.key.endsWith('/audio/mixed.m4a'), mixed.key);
+
+const mq = new URLSearchParams({ sessionId: SID, userId: 'mixed', uploadId: mixed.uploadId, partNumber: '1' });
+res = await fetch(`${BASE}/ingest/audio/part?${mq}`, {
+  method: 'PUT', headers: { ...AUTH, 'Content-Type': 'application/octet-stream' },
+  body: new Uint8Array(1024).fill(7), // 単一パートは 5MiB 未満でも可(最終パート扱い)
+});
+check('mixed part 200', res.status === 200, `status=${res.status} ${await res.clone().text()}`);
+const mixedPart = await res.json();
+
+res = await fetch(`${BASE}/ingest/audio/complete`, {
+  method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ sessionId: SID, userId: 'mixed', uploadId: mixed.uploadId, parts: [mixedPart], durationSec: 3600 }),
+});
+const mc = await res.json().catch(() => ({}));
+check('mixed complete 200', res.status === 200 && mc.key === mixed.key, JSON.stringify(mc));
 
 // 4. パス脱出 userId → 400
 res = await fetch(`${BASE}/ingest/audio/init`, {
