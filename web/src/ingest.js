@@ -11,7 +11,9 @@
  *   - transcript_json: file (任意)
  *
  * 音声は Cloudflare のリクエストボディ上限(100MB)に収まらないことがあるため、
- * /ingest には添付せず R2 マルチパートで分割アップロードする:
+ * /ingest には添付せず R2 マルチパートで分割アップロードする。
+ * userId は話者の snowflake のほか、会話全体のミックス音声を表す "mixed" を受け付ける
+ * (キーは audio/mixed.m4a、tracks には user_id="mixed" の行として載る):
  *   POST /ingest/audio/init      {sessionId, userId} → {key, uploadId}
  *   PUT  /ingest/audio/part?sessionId&userId&uploadId&partNumber  body=チャンク → {partNumber, etag}
  *   POST /ingest/audio/complete  {sessionId, userId, uploadId, parts, durationSec} → tracks.r2_key 更新
@@ -41,6 +43,8 @@ const MAX_PART_NUMBER = 10000;
 // sessionId も `/` 等でキー階層を壊せない文字種に限定する
 const isSnowflake = (s) => typeof s === 'string' && /^\d{1,32}$/.test(s);
 const isValidSessionId = (s) => typeof s === 'string' && /^[\w.-]{1,128}$/.test(s);
+// 音声の userId: 話者の snowflake か、全体ミックスを表す固定値 "mixed"
+const isValidAudioUserId = (s) => isSnowflake(s) || s === 'mixed';
 
 /**
  * R2 の例外がクライアント起因(リトライで直らない)かの粗い分類。
@@ -64,12 +68,13 @@ async function readJson(req) {
 async function audioKeyFor(env, sessionId, userId) {
   const row = await env.DB.prepare('SELECT guild_id FROM sessions WHERE id = ?').bind(sessionId).first();
   if (!row) return null;
-  return `sessions/${row.guild_id}/${sessionId}/audio/${userId}.wav`;
+  const filename = userId === 'mixed' ? 'mixed.m4a' : `${userId}.wav`;
+  return `sessions/${row.guild_id}/${sessionId}/audio/${filename}`;
 }
 
 /** 共通の入力検証 + キー導出。失敗時は Response、成功時は { key } を返す。 */
 async function resolveAudioKey(env, sessionId, userId) {
-  if (!isValidSessionId(sessionId) || !isSnowflake(userId)) {
+  if (!isValidSessionId(sessionId) || !isValidAudioUserId(userId)) {
     return new Response('invalid sessionId/userId', { status: 400 });
   }
   const key = await audioKeyFor(env, sessionId, userId);
@@ -85,7 +90,7 @@ export async function handleAudioInit(req, env) {
   const r = await resolveAudioKey(env, sessionId, userId);
   if (r instanceof Response) return r;
   const upload = await env.BUCKET.createMultipartUpload(r.key, {
-    httpMetadata: { contentType: 'audio/wav' },
+    httpMetadata: { contentType: userId === 'mixed' ? 'audio/mp4' : 'audio/wav' },
   });
   return Response.json({ key: r.key, uploadId: upload.uploadId });
 }

@@ -174,17 +174,23 @@ export default {
           const userId = kind.slice('audio-'.length);
           const tracks = await getTracks(env.DB, sessionId);
           key = tracks.find((t) => t.user_id === userId)?.r2_key ?? null;
-          filename = `${userId}.wav`; ctype = 'audio/wav';
+          if (userId === 'mixed') {
+            filename = 'mixed.m4a'; ctype = 'audio/mp4';
+          } else {
+            filename = `${userId}.wav`; ctype = 'audio/wav';
+          }
         } else {
           return new Response('bad kind', { status: 400 });
         }
         if (!key) return new Response('not available', { status: 404 });
         const obj = await env.BUCKET.get(key);
         if (!obj) return new Response('not found in storage', { status: 404 });
+        // ミックスはページ内の <audio> で再生するため inline(DLリンク側は a[download] で落とす)
+        const disposition = kind === 'audio-mixed' ? 'inline' : 'attachment';
         return new Response(obj.body, {
           headers: {
             'Content-Type': ctype,
-            'Content-Disposition': `attachment; filename="${filename}"`,
+            'Content-Disposition': `${disposition}; filename="${filename}"`,
           },
         });
       }
@@ -211,10 +217,17 @@ export default {
         }
 
         const pList = participants.map((p) => esc(p.display_name || p.user_id)).join('、') || '-';
+        const hasMixed = tracks.some((t) => t.user_id === 'mixed' && t.r2_key);
         const dlAudio = tracks
-          .filter((t) => t.r2_key)
+          .filter((t) => t.r2_key && t.user_id !== 'mixed')
           .map((t) => `<a href="/s/${esc(sessionId)}/dl/audio-${esc(t.user_id)}">${esc(t.user_id)}.wav</a>`)
           .join(' / ');
+        // 会話全体のミックス(実時間軸に全話者を重ねた1本)。話者別 wav と違い会話として聴ける
+        const mixedHtml = hasMixed
+          ? `<h2>会話音声（全体ミックス）</h2>` +
+            `<audio controls preload="none" style="width:100%" src="/s/${esc(sessionId)}/dl/audio-mixed"></audio>` +
+            `<p class="muted"><a href="/s/${esc(sessionId)}/dl/audio-mixed" download="mixed.m4a">mixed.m4a をダウンロード</a></p>`
+          : '';
 
         return html(
           `<p><a href="/g/${esc(row.guild_id)}/c/${esc(row.channel_id)}">← ${esc(row.channel_name || '録音一覧')}へ</a></p>` +
@@ -222,7 +235,8 @@ export default {
             `<p class="muted">🔊 ${esc(row.channel_name || row.channel_id)} · 参加者: ${pList}</p>` +
             `<p><a class="btn" href="/s/${esc(sessionId)}/dl/md">文字起こしをDL(.md)</a> ` +
             `<a class="btn" href="/s/${esc(sessionId)}/dl/json">JSON</a></p>` +
-            (dlAudio ? `<p class="muted">音声: ${dlAudio}</p>` : '') +
+            mixedHtml +
+            (dlAudio ? `<p class="muted">話者別音声: ${dlAudio}</p>` : '') +
             `<h2>文字起こし</h2><pre>${esc(transcript)}</pre>`,
           '録音詳細',
         );
