@@ -9,9 +9,10 @@ import 'dotenv/config';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Client, GatewayIntentBits, MessageFlags } from 'discord.js';
-import { SessionManager } from './recorder.js';
+import { SessionManager, NoActiveSessionError } from './recorder.js';
 import { process as runPipeline } from './pipeline.js';
 import { JoinPromptNotifier, parsePromptChannelIds } from './join-prompt.js';
+import { AutoStopController, parseEmptyDelayMs } from './auto-stop.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RECORDINGS_DIR = process.env.RECORDINGS_DIR ?? join(__dirname, '..', 'recordings');
@@ -37,6 +38,21 @@ if (joinPrompt) {
   console.log(`[bot] join prompt enabled for channels: ${promptChannelIds.join(', ')}`);
 }
 
+// VC が無人になったら猶予付きで自動停止(AUTO_STOP_EMPTY_SEC=0 で無効)
+const autoStopDelayMs = parseEmptyDelayMs(process.env.AUTO_STOP_EMPTY_SEC);
+const autoStop = autoStopDelayMs > 0
+  ? new AutoStopController({
+      sessions,
+      emptyDelayMs: autoStopDelayMs,
+      fetchChannel: (channelId) => client.channels.fetch(channelId),
+      getGuild: (guildId) => client.guilds.cache.get(guildId),
+      stop: (guildId) => autoStopSession(guildId),
+    })
+  : null;
+if (autoStop) {
+  console.log(`[bot] auto-stop enabled: empty VC for ${autoStopDelayMs / 1000}s`);
+}
+
 client.once('clientReady', () => {
   console.log(`[bot] logged in as ${client.user.tag}`);
 });
@@ -47,9 +63,28 @@ client.on('voiceStateUpdate', (oldState, newState) => {
   joinPrompt?.handleVoiceState(oldState, newState).catch((err) => {
     console.error('[bot] join prompt error:', err);
   });
+  autoStop?.handleVoiceState(oldState, newState).catch((err) => {
+    console.error('[bot] auto-stop error:', err);
+  });
 });
 
 client.on('interactionCreate', async (interaction) => {
+  if (interaction.isButton() && interaction.customId.startsWith('autostop:')) {
+    try {
+      if (autoStop) {
+        await autoStop.handleButton(interaction);
+      } else {
+        // 機能無効化後に残った古いボタン。無応答だと「インタラクション失敗」表示になる
+        await interaction
+          .reply({ content: '自動停止機能は現在無効です。', flags: MessageFlags.Ephemeral })
+          .catch(() => {});
+        await interaction.message?.edit({ components: [] }).catch(() => {});
+      }
+    } catch (err) {
+      console.error('[bot] auto-stop button error:', err);
+    }
+    return;
+  }
   if (!interaction.isChatInputCommand()) return;
   try {
     if (interaction.commandName === 'rec') {
@@ -92,6 +127,7 @@ async function handleRecord(interaction) {
       guildId,
       channelId: voiceChannelId,
       startedByUserId: interaction.user.id,
+      notifyChannelId: interaction.channelId, // 自動停止の通知先(このコマンドを打ったチャンネル)
       resolveName,
     });
 
@@ -118,43 +154,95 @@ async function handleRecord(interaction) {
 
   if (sub === 'stop') {
     await interaction.deferReply();
-    const { summary, tracks } = await sessions.stop(guildId);
-
-    if (tracks.length === 0) {
-      await interaction.editReply('⏹ 録音を終了しました。ただし音声が記録されませんでした。');
+    const stopped = await stopSessionSafe(guildId);
+    // 出ているボタン付きメッセージを片付ける(競合負けで stopped が null の場合も)
+    await autoStop?.notifySessionEnded(guildId);
+    if (!stopped) {
+      // 自動停止と /rec stop が競合した場合もここに来る
+      await interaction.editReply('現在このサーバーで録音は行われていません。');
       return;
     }
-
-    const trackLines = tracks
-      .map((t) => `・${t.displayName}: ${t.durationSec}秒`)
-      .join('\n');
-    await interaction.editReply(
-      `⏹ 録音を終了しました（${tracks.length}トラック）\n${trackLines}\n\n` +
-        `📝 文字起こし中です… 完了したらこのチャンネルに投稿します。`,
-    );
-
-    // 録音終了後にまとめて: wav 化 → STT → 議事録生成 → 保存。
-    // 時間がかかるので非同期で進め、完了後にチャンネルへ投稿する。
-    runPipeline(summary, tracks)
-      .then(async ({ minutes, files, upload }) => {
-        const speakerCount = minutes.speakers.length;
-        const link = upload?.uploaded
-          ? `🔗 ${upload.viewUrl}\n（閲覧には対象ロールでのDiscordログインが必要です）`
-          : `（WebUIアップロード未実行: ${upload?.reason ?? '設定なし'}。ローカル保存: \`${files.mdPath}\`）`;
-        await interaction.channel
-          ?.send(
-            `✅ 文字起こしが完了しました（話者 ${speakerCount}名）\n` +
-              `セッション \`${summary.id}\`\n${link}`,
-          )
-          .catch(() => {});
-        console.log('[bot] transcript ready:', files.mdPath, '| uploaded:', upload?.uploaded);
-      })
-      .catch(async (err) => {
-        console.error('[bot] pipeline error:', err);
-        await interaction.channel?.send(`⚠ 文字起こしに失敗しました: ${err.message}`).catch(() => {});
-      });
+    const { summary, tracks } = stopped;
+    await interaction.editReply(formatStopReport(tracks));
+    if (tracks.length > 0) announcePipelineResult(summary, tracks, interaction.channel);
     return;
   }
+}
+
+/**
+ * 録音停止を行う。進行中の録音がなければ null(停止経路の競合で後着になった場合を含む)。
+ * session.stop 自体の失敗はそのまま投げ、呼び出し元でユーザーへ表面化させる。
+ * 失敗時も PCM はディスクに残るが、wav/transcript 生成前のため reupload.js では
+ * 復旧できない(手動対応)。
+ */
+async function stopSessionSafe(guildId) {
+  if (!sessions.get(guildId)) return null;
+  try {
+    return await sessions.stop(guildId);
+  } catch (err) {
+    // byGuild からの除去は stop() 冒頭で同期的に行われるため、このエラーは
+    // 競合の後着を意味する。それ以外は本物の停止失敗として区別する。
+    if (err instanceof NoActiveSessionError) return null;
+    throw err;
+  }
+}
+
+/** 無人検知による自動停止(AutoStopController から呼ばれる)。通知は /rec start のチャンネルへ。 */
+async function autoStopSession(guildId) {
+  const notifyChannelId = sessions.get(guildId)?.notifyChannelId;
+  const fetchNotifyChannel = async () =>
+    notifyChannelId ? await client.channels.fetch(notifyChannelId).catch(() => null) : null;
+
+  let stopped;
+  try {
+    stopped = await stopSessionSafe(guildId);
+  } catch (err) {
+    // interaction が無い経路なので、通知チャンネルへ失敗を表面化させる
+    console.error(`[bot] auto-stop failed (guild=${guildId}):`, err);
+    const channel = await fetchNotifyChannel();
+    await channel?.send(`⚠ 録音の自動停止に失敗しました: ${err.message}`).catch(() => {});
+    return;
+  }
+  if (!stopped) return;
+  console.log(`[bot] auto-stopped session for guild ${guildId}`);
+  const { summary, tracks } = stopped;
+  const channel = await fetchNotifyChannel();
+  await channel?.send(formatStopReport(tracks)).catch(() => {});
+  if (tracks.length > 0) announcePipelineResult(summary, tracks, channel);
+}
+
+function formatStopReport(tracks) {
+  if (tracks.length === 0) return '⏹ 録音を終了しました。ただし音声が記録されませんでした。';
+  const trackLines = tracks.map((t) => `・${t.displayName}: ${t.durationSec}秒`).join('\n');
+  return (
+    `⏹ 録音を終了しました（${tracks.length}トラック）\n${trackLines}\n\n` +
+    `📝 文字起こし中です… 完了したらこのチャンネルに投稿します。`
+  );
+}
+
+/**
+ * 録音終了後にまとめて: wav 化 → STT → 議事録生成 → 保存。
+ * 時間がかかるので非同期で進め、完了後にチャンネルへ投稿する。
+ */
+function announcePipelineResult(summary, tracks, channel) {
+  runPipeline(summary, tracks)
+    .then(async ({ minutes, files, upload }) => {
+      const speakerCount = minutes.speakers.length;
+      const link = upload?.uploaded
+        ? `🔗 ${upload.viewUrl}\n（閲覧には対象ロールでのDiscordログインが必要です）`
+        : `（WebUIアップロード未実行: ${upload?.reason ?? '設定なし'}。ローカル保存: \`${files.mdPath}\`）`;
+      await channel
+        ?.send(
+          `✅ 文字起こしが完了しました（話者 ${speakerCount}名）\n` +
+            `セッション \`${summary.id}\`\n${link}`,
+        )
+        .catch(() => {});
+      console.log('[bot] transcript ready:', files.mdPath, '| uploaded:', upload?.uploaded);
+    })
+    .catch(async (err) => {
+      console.error('[bot] pipeline error:', err);
+      await channel?.send(`⚠ 文字起こしに失敗しました: ${err.message}`).catch(() => {});
+    });
 }
 
 async function handleSetup(interaction) {
