@@ -9,7 +9,7 @@ Discord VC を録音・日本語文字起こしし、ロール保有者だけが
 - **`recorder/`** — 録音 Bot（Node.js 22+, Fly.io 常駐）。Discord VC への UDP 常駐受信はサーバーレス不可のため、ここだけ常駐ホスト。
 - **`web/`** — WebUI + 認証 + 取り込み（Cloudflare Workers + R2 + D1）。
 
-データフロー: recorder が話者別に PCM 録音 → `/rec stop` で `pipeline.js` が wav 化・STT・時系列マージ → `upload.js` が web の `/ingest` へ POST（メタ+transcript）、音声は R2 マルチパート（`/ingest/audio/init|part|complete|abort`）で分割アップロード → web が D1/R2 から配信。
+データフロー: recorder が話者別に PCM 録音 → `/rec stop` で `pipeline.js` が wav 化・STT・時系列マージ・全体ミックス生成（`mix.js`、発話区間を実時刻に配置した `mixed.m4a`）→ `upload.js` が web の `/ingest` へ POST（メタ+transcript）、音声（話者別 wav + `userId=mixed` のミックス）は R2 マルチパート（`/ingest/audio/init|part|complete|abort`）で分割アップロード → web が D1/R2 から配信。
 
 ## コマンド
 

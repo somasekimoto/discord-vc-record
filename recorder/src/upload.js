@@ -7,7 +7,8 @@
  * リクエストボディ上限(100MB)を超えて 413 になる(2時間3話者で計800MB超の実績あり)。
  * そのため 2 段階に分ける:
  *   1. meta + transcript(md/json) を POST /ingest(小さいので1リクエスト)
- *   2. wav をファイルごとに R2 マルチパート(init → 40MiB チャンク × part → complete)
+ *   2. 音声(話者別 wav + 全体ミックス m4a)をファイルごとに R2 マルチパート
+ *      (init → 40MiB チャンク × part → complete)。ミックスは userId="mixed" で送る
  */
 import { openAsBlob } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
@@ -70,14 +71,17 @@ async function postMeta(base, secret, minutes, files) {
   });
 }
 
-/** wav 1 本を R2 マルチパートで分割アップロードする。 */
-async function uploadWav(base, secret, sessionId, wavPath, durationSec) {
-  const userId = basename(wavPath).replace(/\.wav$/, '');
-  const { size } = await stat(wavPath);
+/**
+ * 音声 1 本を R2 マルチパートで分割アップロードする。
+ * userId は話者の snowflake、または全体ミックスを表す "mixed"(キーは web 側が決める)。
+ */
+async function uploadAudio(base, secret, sessionId, { path, userId, durationSec }) {
+  const filename = basename(path);
+  const { size } = await stat(path);
   const auth = { Authorization: `Bearer ${secret}` };
   const q = (extra) => new URLSearchParams({ sessionId, userId, ...extra }).toString();
 
-  const { uploadId } = await withRetry(`audio init ${userId}`, async () => {
+  const { uploadId } = await withRetry(`audio init ${filename}`, async () => {
     const res = await fetch(`${base}/ingest/audio/init`, {
       method: 'POST',
       headers: { ...auth, 'Content-Type': 'application/json' },
@@ -86,7 +90,7 @@ async function uploadWav(base, secret, sessionId, wavPath, durationSec) {
     return (await expectOk(res, 'audio init')).json();
   });
 
-  const fh = await open(wavPath, 'r');
+  const fh = await open(path, 'r');
   try {
     const totalParts = Math.max(1, Math.ceil(size / PART_SIZE));
     const parts = [];
@@ -94,7 +98,7 @@ async function uploadWav(base, secret, sessionId, wavPath, durationSec) {
       const partNumber = i + 1;
       const length = Math.min(PART_SIZE, size - i * PART_SIZE);
       const buf = await readExact(fh, length, i * PART_SIZE);
-      const part = await withRetry(`audio part ${userId} ${partNumber}/${totalParts}`, async () => {
+      const part = await withRetry(`audio part ${filename} ${partNumber}/${totalParts}`, async () => {
         const res = await fetch(`${base}/ingest/audio/part?${q({ uploadId, partNumber })}`, {
           method: 'PUT',
           headers: { ...auth, 'Content-Type': 'application/octet-stream' },
@@ -103,10 +107,10 @@ async function uploadWav(base, secret, sessionId, wavPath, durationSec) {
         return (await expectOk(res, 'audio part')).json();
       });
       parts.push({ partNumber: part.partNumber, etag: part.etag });
-      console.log(`[upload] ${userId}.wav part ${partNumber}/${totalParts} ok`);
+      console.log(`[upload] ${filename} part ${partNumber}/${totalParts} ok`);
     }
 
-    await withRetry(`audio complete ${userId}`, async () => {
+    await withRetry(`audio complete ${filename}`, async () => {
       const res = await fetch(`${base}/ingest/audio/complete`, {
         method: 'POST',
         headers: { ...auth, 'Content-Type': 'application/json' },
@@ -129,7 +133,7 @@ async function uploadWav(base, secret, sessionId, wavPath, durationSec) {
 
 /**
  * @param {object} minutes  pipeline が生成した構造化JSON(transcript.json 相当)
- * @param {{mdPath:string, jsonPath:string, wavPaths:string[]}} files
+ * @param {{mdPath:string, jsonPath:string, wavPaths:string[], mixedPath?:string|null}} files
  * @returns {Promise<{uploaded:boolean, sessionId:string, viewUrl?:string, reason?:string}>}
  */
 export async function uploadToWeb(minutes, files) {
@@ -148,16 +152,27 @@ export async function uploadToWeb(minutes, files) {
   }
   const viewUrl = `${base}/s/${sessionId}`;
 
-  // 2. 話者別 wav。1 本失敗しても他は続行し、失敗分だけ reason に載せる。
+  // 2. 話者別 wav + 全体ミックス。1 本失敗しても他は続行し、失敗分だけ reason に載せる。
   //    逐次実行でメモリ(チャンク40MiB×1)と帯域を抑える。
   const errors = [];
   for (const wavPath of files.wavPaths) {
     const userId = basename(wavPath).replace(/\.wav$/, '');
     const durationSec = (minutes.speakers || []).find((s) => s.userId === userId)?.durationSec;
     try {
-      await uploadWav(base, secret, sessionId, wavPath, durationSec);
+      await uploadAudio(base, secret, sessionId, { path: wavPath, userId, durationSec });
     } catch (err) {
       errors.push(`${userId}: ${err.message}`);
+    }
+  }
+  if (files.mixedPath) {
+    // ミックスは無音込みの実時間なのでセッション長がそのまま長さになる
+    const durationSec = minutes.endedAt && minutes.startedAt
+      ? Math.round((minutes.endedAt - minutes.startedAt) / 1000)
+      : null;
+    try {
+      await uploadAudio(base, secret, sessionId, { path: files.mixedPath, userId: 'mixed', durationSec });
+    } catch (err) {
+      errors.push(`mixed: ${err.message}`);
     }
   }
 

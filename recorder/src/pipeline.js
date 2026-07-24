@@ -5,21 +5,23 @@
  *   1. 各話者の PCM を ffmpeg で wav 化（STT に渡せる形式）
  *   2. recorder が記録した発話区間(実時刻+PCM内バイト位置)ごとに wav を切り出し、
  *      区間単位で文字起こしする。話者トラックから切り出すので誤帰属が起きない。
- *   3. 全話者の発話を開始時刻順にマージして時系列の議事録(Markdown)と
+ *   3. 発話区間を実時刻に沿って1本に重ねた「会話全体のミックス音声」(mixed.m4a)を生成
+ *   4. 全話者の発話を開始時刻順にマージして時系列の議事録(Markdown)と
  *      構造化 JSON(utterances + 後方互換の speakers)に組む
- *   4. ローカルに保存し、web(R2/D1)へアップロード
+ *   5. ローカルに保存し、web(R2/D1)へアップロード
  *
  * PCM には発話部分だけが連結されて無音が潰れているため、STT のタイムスタンプでは
  * 実時刻を復元できない。時系列の根拠は recorder の utterances のみ。
  *
  * 出力はセッションディレクトリ直下:
- *   transcript.md / transcript.json / <userId>.wav
+ *   transcript.md / transcript.json / <userId>.wav / mixed.m4a
  */
-import { spawn } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PCM_FORMAT } from './recorder.js';
+import { ffmpeg } from './ffmpeg.js';
+import { buildMixedAudio } from './mix.js';
 import { transcribe, getProviderName } from './stt/index.js';
 import { uploadToWeb } from './upload.js';
 
@@ -33,16 +35,6 @@ const MIN_SEGMENT_MS = 300;
 const PAD_SEC = 0.25;
 // STT の並列数。区間単位の呼び出しは数が多いので並列化しつつ、レート制限に配慮する
 const STT_CONCURRENCY = 4;
-
-function ffmpeg(args) {
-  return new Promise((resolve, reject) => {
-    const p = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args]);
-    let err = '';
-    p.stderr.on('data', (d) => (err += d));
-    p.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg failed: ${err}`))));
-    p.on('error', reject);
-  });
-}
 
 /** 生 PCM(s16le 48k stereo) を wav に変換してパスを返す。 */
 async function pcmToWav(pcmPath, wavPath) {
@@ -198,7 +190,15 @@ export async function process(summary, tracks) {
   }
   utterances.sort((a, b) => a.startedAt - b.startedAt);
 
-  // 3. 構造化 JSON。utterances が時系列の本体。
+  // 3. 会話全体のミックス音声。失敗しても文字起こしの成果は損なわない(音声なしで続行)。
+  let mixed = null;
+  try {
+    mixed = await buildMixedAudio(summary, tracks, join(dir, 'mixed.m4a'));
+  } catch (err) {
+    console.error(`[pipeline] mixed audio failed: ${err.message}`);
+  }
+
+  // 4. 構造化 JSON。utterances が時系列の本体。
   // speakers は web(ingest/upload) が durationSec 等を参照するため後方互換で残す。
   const perSpeaker = speakerTracks.map((t) => {
     let text;
@@ -238,7 +238,7 @@ export async function process(summary, tracks) {
     speakers: perSpeaker,
   };
 
-  // 3. Markdown 議事録(時系列の会話ログ)
+  // 4. Markdown 議事録(時系列の会話ログ)
   const durationMin = summary.endedAt && summary.startedAt
     ? ((summary.endedAt - summary.startedAt) / 60000).toFixed(1)
     : '?';
@@ -277,14 +277,14 @@ export async function process(summary, tracks) {
   }
   const markdown = lines.join('\n');
 
-  // 4. ローカル保存
+  // 5. ローカル保存
   const mdPath = join(dir, 'transcript.md');
   const jsonPath = join(dir, 'transcript.json');
   await writeFile(mdPath, markdown, 'utf8');
   await writeFile(jsonPath, JSON.stringify(minutes, null, 2), 'utf8');
 
   // 5. web(R2/D1)へアップロード。未設定ならスキップ(ローカル保存のみ)。
-  const files = { wavPaths, mdPath, jsonPath };
+  const files = { wavPaths, mdPath, jsonPath, mixedPath: mixed?.path ?? null };
   let upload = { uploaded: false };
   try {
     upload = await uploadToWeb(minutes, files);
