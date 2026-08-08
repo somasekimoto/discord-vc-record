@@ -11,7 +11,12 @@ import { dirname, join } from 'node:path';
 import { Client, GatewayIntentBits, MessageFlags } from 'discord.js';
 import { SessionManager, NoActiveSessionError } from './recorder.js';
 import { process as runPipeline } from './pipeline.js';
-import { JoinPromptNotifier, parsePromptChannelIds } from './join-prompt.js';
+import {
+  JoinPromptNotifier,
+  parsePromptChannelIds,
+  handleStartButton,
+  START_BUTTON_PREFIX,
+} from './join-prompt.js';
 import { AutoStopController, parseEmptyDelayMs } from './auto-stop.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -85,6 +90,14 @@ client.on('interactionCreate', async (interaction) => {
     }
     return;
   }
+  if (interaction.isButton() && interaction.customId.startsWith(`${START_BUTTON_PREFIX}:`)) {
+    try {
+      await handleStartButton(interaction, { sessions, startSession });
+    } catch (err) {
+      console.error('[bot] start button error:', err);
+    }
+    return;
+  }
   if (!interaction.isChatInputCommand()) return;
   try {
     if (interaction.commandName === 'rec') {
@@ -120,15 +133,11 @@ async function handleRecord(interaction) {
     }
 
     await interaction.deferReply();
-    const guild = client.guilds.cache.get(guildId);
-    const resolveName = (id) => guild?.members?.cache.get(id)?.displayName ?? id;
-
-    const session = await sessions.start({
+    const session = await startSession({
       guildId,
       channelId: voiceChannelId,
       startedByUserId: interaction.user.id,
       notifyChannelId: interaction.channelId, // 自動停止の通知先(このコマンドを打ったチャンネル)
-      resolveName,
     });
 
     await interaction.editReply(
@@ -167,6 +176,22 @@ async function handleRecord(interaction) {
     if (tracks.length > 0) announcePipelineResult(summary, tracks, interaction.channel);
     return;
   }
+}
+
+/**
+ * 録音開始を行う。/rec start とボタンの両経路から呼ぶ共通処理。
+ * 既に録音中の場合は SessionManager.start が throw する(二重開始の排他)。
+ */
+async function startSession({ guildId, channelId, startedByUserId, notifyChannelId }) {
+  const guild = client.guilds.cache.get(guildId);
+  const resolveName = (id) => guild?.members?.cache.get(id)?.displayName ?? id;
+  return await sessions.start({
+    guildId,
+    channelId,
+    startedByUserId,
+    notifyChannelId,
+    resolveName,
+  });
 }
 
 /**

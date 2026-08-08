@@ -47,7 +47,7 @@ npm run start          # Bot起動
 | `GUILD_ID` | テスト用ギルドID（即時登録／省略でグローバル） |
 | `OPENAI_API_KEY` | STT（gpt-4o-transcribe） |
 | `STT_PROVIDER` | `openai`（既定）。将来 `local`（faster-whisper） |
-| `RECORD_PROMPT_CHANNEL_IDS` | 入室時に `/rec start` を促すVCのID（カンマ区切りで複数可、任意） |
+| `RECORD_PROMPT_CHANNEL_IDS` | 入室時に録音開始を促すVCのID（カンマ区切りで複数可、任意） |
 
 ## コマンド
 
@@ -56,7 +56,9 @@ npm run start          # Bot起動
 - `/rec status` — 録音状況
 - `/setup role:<ロール>` — 閲覧を許可するロールを設定（管理者のみ）
 
-`RECORD_PROMPT_CHANNEL_IDS` を設定すると、対象VCに最初の1人が入室したときにVC内チャットへ `/rec start` を促すメッセージを投稿する（録音中はスキップ、同一VCへの再通知は5分クールダウン）。Botに対象VCへの「メッセージ送信」権限が必要。
+`RECORD_PROMPT_CHANNEL_IDS` を設定すると、対象VCに最初の1人が入室したときにVC内チャットへ録音開始を促すメッセージを投稿する（録音中はスキップ、同一VCへの再通知は5分クールダウン）。Botに対象VCへの「メッセージ送信」権限が必要。
+
+このメッセージには「録音を開始」ボタンが付き、`/rec start` を打たずに録音を始められる（開始処理はコマンド経路と共通）。押した人がVCにいない・ボタンとは別のVCにいる・既に録音中の場合は開始せず、本人にだけ見えるメッセージで理由を返す。
 
 - 「最初の1人」判定は voiceStates ベースの best-effort。member 未解決の在室者は人間扱いし、誤通知より通知抑制に倒す
 - 設定が env var なのは、recorder が D1 を読むパスを持たない現状での MVP 判断。ギルド管理者がセルフサービスで変えたくなったら `/setup` → D1 への移行を検討

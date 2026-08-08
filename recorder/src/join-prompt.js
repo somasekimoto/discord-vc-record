@@ -2,7 +2,8 @@
  * join-prompt.js — VC参加時の録音開始リマインダー。
  *
  * RECORD_PROMPT_CHANNEL_IDS で指定した VC に人が入ったとき、
- * その VC のテキストチャット(Text in Voice)へ /rec start を促すメッセージを投稿する。
+ * その VC のテキストチャット(Text in Voice)へ録音開始を促すメッセージを投稿する。
+ * メッセージには開始ボタンを付け、/rec start を打たなくても録音を始められる。
  *
  * スパム防止のため以下の場合は投稿しない:
  *  - Bot 自身の入退室
@@ -10,8 +11,33 @@
  *  - VC に既に他の人がいる(最初の入室者にだけ通知)
  *  - 同一チャンネルでクールダウン時間内に通知済み
  */
+import { MessageFlags } from 'discord.js';
 
 export const DEFAULT_COOLDOWN_MS = 5 * 60 * 1000;
+
+/** 開始ボタンの customId プレフィックス。index.js の interaction 分岐と対応する。 */
+export const START_BUTTON_PREFIX = 'recstart';
+
+/**
+ * 開始ボタン行を組む(auto-stop.js と同じく raw component で表現)。
+ * customId に対象 VC の channelId を埋め、押下時に「どの VC を録音するか」を
+ * ボタン側で一意に決める(押した人が別の VC にいる場合を弾くため)。
+ */
+export function buildStartComponents(channelId) {
+  return [
+    {
+      type: 1, // ActionRow
+      components: [
+        {
+          type: 2,
+          style: 3, // Success
+          label: '録音を開始',
+          custom_id: `${START_BUTTON_PREFIX}:${channelId}`,
+        },
+      ],
+    },
+  ];
+}
 
 export class JoinPromptNotifier {
   /**
@@ -74,10 +100,12 @@ export class JoinPromptNotifier {
 
     const name = newState.member?.displayName ?? 'メンバー';
     try {
-      await channel.send(
-        `🎙 ${name} さんがVCに参加しました。\n` +
-          `会話を記録する場合は、このVCで \`/rec start\` を実行して録音を開始してください。`,
-      );
+      await channel.send({
+        content:
+          `🎙 ${name} さんがVCに参加しました。\n` +
+          `会話を記録する場合は、下のボタン（または \`/rec start\`）で録音を開始してください。`,
+        components: buildStartComponents(channelId),
+      });
     } catch (err) {
       // 一時的な失敗で5分間沈黙しないよう、クールダウンを戻して次の入室で再試行させる
       this.lastPromptedAt.delete(channelId);
@@ -86,6 +114,73 @@ export class JoinPromptNotifier {
     }
     return true;
   }
+}
+
+/**
+ * 開始ボタン(`recstart:<channelId>`)の押下を処理する。
+ *
+ * 押下時点の状態から判定するので、Bot 再起動やクールダウンをまたいで残った
+ * 古いボタンが押されても安全に扱える。どの分岐でも必ず何か応答し、
+ * 「インタラクション失敗」表示を出さない。
+ *
+ * @param {object} interaction ボタン interaction
+ * @param {object} deps
+ * @param {{get:(guildId:string)=>object|undefined}} deps.sessions SessionManager
+ * @param {(opts:object)=>Promise<object>} deps.startSession 録音開始(コマンド経路と共通)
+ */
+export async function handleStartButton(interaction, { sessions, startSession }) {
+  const channelId = interaction.customId.split(':')[1];
+  const guildId = interaction.guildId;
+
+  const reply = (content) =>
+    interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => {});
+
+  // 既に録音中(別の人が先に開始した / /rec start 済み)。二重開始しない。
+  if (sessions.get(guildId)) {
+    await reply('このサーバーでは既に録音中です。');
+    await interaction.message?.edit({ components: [] }).catch(() => {});
+    return false;
+  }
+
+  const voiceChannelId = interaction.member?.voice?.channelId;
+  if (!voiceChannelId) {
+    await reply('先にVCに参加してから録音を開始してください。');
+    return false;
+  }
+  // ボタンの VC と押した人の VC が食い違う場合は拒否する。
+  // 本人のいる VC を勝手に録音すると、押した本人の意図と食い違いうるため。
+  if (voiceChannelId !== channelId) {
+    await reply('このボタンは別のVC用です。参加中のVCで `/rec start` を実行してください。');
+    return false;
+  }
+
+  // 開始確定を先に宣言し、同時押下での二重開始を防ぐ。実際の排他は
+  // SessionManager.start が byGuild への登録で担保する(後着は throw)。
+  await interaction.deferUpdate().catch(() => {});
+  let session;
+  try {
+    session = await startSession({
+      guildId,
+      channelId,
+      startedByUserId: interaction.user.id,
+      // 自動停止などの通知先はボタンが置かれたチャンネル(Text in Voice)
+      notifyChannelId: interaction.channelId,
+    });
+  } catch (err) {
+    console.error(`[join-prompt] start button failed (guild=${guildId}): ${err.message}`);
+    await reply(`録音を開始できませんでした: ${err.message}`);
+    return false;
+  }
+
+  await interaction.message
+    ?.edit({
+      content:
+        `🔴 録音を開始しました（セッション: \`${session.id}\`）\n` +
+        `このVCの会話を話者ごとに記録します。終了するには \`/rec stop\` を実行してください。`,
+      components: [],
+    })
+    .catch(() => {});
+  return true;
 }
 
 /**
