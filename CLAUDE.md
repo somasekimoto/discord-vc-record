@@ -39,7 +39,7 @@ node test/smoke.mjs                       # 取り込みフロー E2E（wrangler
 - **`/ingest/audio/complete` は冪等**。recorder はレスポンス喪失時に complete をリトライするため、完了済みでもオブジェクトが存在すれば 200 を返す。
 - **認可は毎リクエスト Discord に問い合わせ**（`web/src/authz.js`）。ギルドの `required_role_id`（D1 `guild_config`、`/setup` で設定）の保有を確認する。
 - **STT はプロバイダ抽象化**（`recorder/src/stt/index.js`）。`pipeline.js` は `transcribe()` だけを呼ぶ。プロバイダ追加 = ファイル1枚 + 分岐1行。既定は OpenAI `gpt-4o-transcribe`、`STT_PROVIDER` で切替。
-- 入室プロンプト（`join-prompt.js`）の「最初の1人」判定は voiceStates ベースの best-effort。member 未解決の在室者は人間扱いし、誤通知より通知抑制に倒す。
+- 入室プロンプト（`join-prompt.js`）の「最初の1人」判定は voiceStates ベースの best-effort。member 未解決の在室者は人間扱いし、誤通知より通知抑制に倒す。プロンプトの「録音を開始」ボタン（`customId` は `recstart:<channelId>`）と `/rec start` は `index.js` の `startSession` を共有する。二重開始の排他は `SessionManager.start` の `byGuild` 登録が担保（後着は throw）。
 - 自動停止（`auto-stop.js`）の無人判定も同じく voiceStates ベース。member 未解決の在室者は人間扱いし、会議中の誤停止より停止抑制に倒す。停止経路（自動/ボタン/`/rec stop`）は競合しうるため `index.js` の `stopSessionSafe` で冪等化している。
 
 ## 秘密情報・設定ファイル
