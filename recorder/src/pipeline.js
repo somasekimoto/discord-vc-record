@@ -9,6 +9,7 @@
  *   4. 全話者の発話を開始時刻順にマージして時系列の議事録(Markdown)と
  *      構造化 JSON(utterances + 後方互換の speakers)に組む
  *   5. ローカルに保存し、web(R2/D1)へアップロード
+ *   6. アップロードできたら中間物の PCM を削除(ディスク満杯による録音不能を防ぐ)
  *
  * PCM には発話部分だけが連結されて無音が潰れているため、STT のタイムスタンプでは
  * 実時刻を復元できない。時系列の根拠は recorder の utterances のみ。
@@ -24,6 +25,7 @@ import { ffmpeg } from './ffmpeg.js';
 import { buildMixedAudio } from './mix.js';
 import { transcribe, getProviderName } from './stt/index.js';
 import { uploadToWeb } from './upload.js';
+import { deletePcmFiles } from './cleanup.js';
 
 const BYTES_PER_SEC = PCM_FORMAT.sampleRate * PCM_FORMAT.channels * (PCM_FORMAT.bitsPerSample / 8);
 // 同一話者の発話間ギャップがこれ以下なら 1 区間に結合(STT 呼び出し数と文脈切れを抑える)
@@ -290,6 +292,14 @@ export async function process(summary, tracks) {
     upload = await uploadToWeb(minutes, files);
   } catch (err) {
     upload = { uploaded: false, reason: err.message };
+  }
+
+  // 6. アップロードできたら中間物の PCM を消す(ディスク満杯=録音不能を防ぐ)。
+  // 失敗しても文字起こし結果は返す。掃除の失敗で本体を巻き込まない。
+  if (upload.uploaded) {
+    await deletePcmFiles(dir).catch((err) => {
+      console.error(`[pipeline] pcm cleanup failed: ${err.message}`);
+    });
   }
 
   return { markdown, minutes, files, upload };
