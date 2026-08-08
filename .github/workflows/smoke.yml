@@ -19,12 +19,17 @@ jobs:
       WRANGLER_SEND_METRICS: 'false'
     steps:
       - uses: actions/checkout@v4
+      # pnpm は package.json の packageManager 指定に従って corepack が用意する。
+      # setup-node の cache: pnpm より前に pnpm が居る必要があるのでこの順番。
+      - name: Enable corepack
+        run: corepack enable
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: npm ci
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      # --frozen-lockfile: lockfile と package.json がズレていたら CI を落とす
+      - run: pnpm install --frozen-lockfile
       # wrangler.toml は非コミット(実IDを含むため)。ローカルモードなら実IDは不要なので
       # CI用の最小構成を生成する
       - name: Generate CI wrangler.toml
@@ -45,10 +50,10 @@ jobs:
           database_id = "00000000-0000-0000-0000-000000000000" # gitleaks:allow ダミーID(ローカルモードでは未使用)
           EOF
       - name: Apply schema to local D1
-        run: npx wrangler d1 execute vc-record --local --file=schema.sql
+        run: pnpm exec wrangler d1 execute vc-record --local --file=schema.sql
       - name: Start wrangler dev
         run: |
-          npx wrangler dev --port 8788 --var INGEST_SECRET:smoke-test-secret > wrangler-dev.log 2>&1 &
+          pnpm exec wrangler dev --port 8788 --var INGEST_SECRET:smoke-test-secret > wrangler-dev.log 2>&1 &
           for i in $(seq 1 60); do
             curl -sf -o /dev/null http://127.0.0.1:8788/ && exit 0
             sleep 1

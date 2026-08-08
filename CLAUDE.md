@@ -16,19 +16,19 @@ Discord VC を録音・日本語文字起こしし、ロール保有者だけが
 ### recorder（`cd recorder`）
 
 ```bash
-npm test                                  # 全テスト（node:test。統合テストは ffmpeg 必須）
+pnpm test                                 # 全テスト（node:test。統合テストは ffmpeg 必須）
 node --test test/pipeline-unit.test.mjs   # 単一テストファイル
-npm run register                          # スラッシュコマンドを Discord へ登録
-npm run start                             # Bot 起動（.env 必要）
+pnpm run register                         # スラッシュコマンドを Discord へ登録
+pnpm run start                            # Bot 起動（.env 必要）
 node src/reupload.js <sessionId>          # アップロードだけ失敗したセッションの復旧
 ```
 
 ### web（`cd web`）
 
 ```bash
-npm run dev                               # wrangler dev（ローカル D1/R2 エミュレーション）
-npm run deploy                            # wrangler deploy
-npx wrangler d1 execute <db> --local --file=schema.sql   # ローカル D1 にスキーマ適用
+pnpm run dev                              # wrangler dev（ローカル D1/R2 エミュレーション）
+pnpm run deploy                           # wrangler deploy
+pnpm exec wrangler d1 execute <db> --local --file=schema.sql   # ローカル D1 にスキーマ適用
 node test/smoke.mjs                       # 取り込みフロー E2E（wrangler dev :8788 を先に起動。SMOKE_BIG=1 で 105MiB 分割も検証）
 ```
 
@@ -43,6 +43,10 @@ node test/smoke.mjs                       # 取り込みフロー E2E（wrangler
 - 入室プロンプト（`join-prompt.js`）の「最初の1人」判定は voiceStates ベースの best-effort。member 未解決の在室者は人間扱いし、誤通知より通知抑制に倒す。プロンプトの「録音を開始」ボタン（`customId` は `recstart:<channelId>`）と `/rec start` は `index.js` の `startSession` を共有する。二重開始の排他は `SessionManager.start` の `byGuild` 登録が担保（後着は throw）。
 - 自動停止（`auto-stop.js`）の無人判定も同じく voiceStates ベース。member 未解決の在室者は人間扱いし、会議中の誤停止より停止抑制に倒す。停止経路（自動/ボタン/`/rec stop`）は競合しうるため `index.js` の `stopSessionSafe` で冪等化している。
 
+- **パッケージマネージャは pnpm 固定**（`packageManager` で版も固定、`npm install` は使わない）。サプライチェーン攻撃対策の設定が `pnpm-workspace.yaml` にあり、npm ではその防御が丸ごと無効になるため。recorder / web はそれぞれ独立した pnpm プロジェクト（lockfile も別）で、単一 workspace にはまとめていない — 別々のデプロイ物で依存も交わらず、統合すると web の依存更新が recorder の Docker レイヤキャッシュを壊すため。
+- **ビルドスクリプトはホワイトリスト方式**（pnpm 11 の既定で拒否）。`pnpm-workspace.yaml` の `allowBuilds` に書いたパッケージだけが実行を許される。**`@discordjs/opus` の許可を外すと録音が壊れる**（node-gyp のネイティブビルドが必須）。依存追加時に `ERR_PNPM_IGNORED_BUILDS` が出たら、中身を確認したうえで `allowBuilds` に追記する。`dangerouslyAllowAllBuilds` は使わない。Dockerfile は install 前に `pnpm-workspace.yaml` を COPY すること（無いとビルドが拒否され録音不能なイメージができる）。
+- **`minimumReleaseAge: 10080`（7日、単位は分）で新しすぎるリリースを掴まない**。汚染パッケージは公開から数時間〜1日で発見・削除されることが多いため猶予を置く。pnpm 11 でもこれは既定で無効なので明示指定が必要（`7` と書くと7分になる）。緊急時は `pnpm add <pkg> --allow-any-release-age` で個別に回避する。
+
 ## 秘密情報・設定ファイル
 
 - `wrangler.toml` / `fly.toml` / `.env` は実値を含むため gitignore 済み。`*.example` をコピーして使う。実値は絶対にコミットしない。
@@ -55,6 +59,6 @@ node test/smoke.mjs                       # 取り込みフロー E2E（wrangler
 
 ## CI（`.github/workflows/`）
 
-- `recorder-test.yml` — recorder のテスト（ffmpeg をインストールして `npm test`）
+- `recorder-test.yml` — recorder のテスト（ffmpeg をインストールして `pnpm test`）
 - `smoke.yml` — web の取り込みフロー E2E（CI 用の最小 `wrangler.toml` を生成してローカルモードで実行）
 - `gitleaks.yml` — シークレットスキャン

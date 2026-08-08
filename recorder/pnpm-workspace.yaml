@@ -1,0 +1,18 @@
+# pnpm の設定（サプライチェーン攻撃対策）。
+#
+# minimumReleaseAge: 公開から一定時間が経ったバージョンだけを解決対象にする。単位は「分」。
+#   汚染パッケージは公開から数時間〜1日で発見・削除されることが多いため、
+#   新しすぎるリリースを掴まない猶予を置く。7日 = 10080分。
+#   （7 と書くと7分になるので注意。pnpm 11 の既定は無効なので明示指定が必要。）
+#   緊急でこれより新しい版が要る場合は pnpm add <pkg> --allow-any-release-age で個別に回避する。
+#
+# allowBuilds: pnpm 11 は依存のビルドスクリプト実行を既定で拒否する（ホワイトリスト方式）。
+#   ネイティブビルドが必須のパッケージだけをここで明示的に許可する。
+#   依存を追加して ERR_PNPM_IGNORED_BUILDS が出たら、中身を確認したうえでここへ足すこと
+#   （無条件許可 = サプライチェーン攻撃の入口なので dangerouslyAllowAllBuilds は使わない）。
+#
+#   @discordjs/opus: node-pre-gyp で Opus をビルド/取得する。これが動かないと録音が壊れる。
+#   @snazzah/davey は prebuilt の napi バイナリ配布でビルド不要のため許可不要。
+minimumReleaseAge: 10080
+allowBuilds:
+  '@discordjs/opus': true

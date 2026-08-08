@@ -28,14 +28,33 @@ sh scripts/setup-hooks.sh   # gitleaks による pre-commit / pre-push を有効
 
 実値を含む設定は `*.example` をコピーして使う（`wrangler.toml` / `fly.toml` / `.env` は gitignore 済み）。
 
+## パッケージマネージャは pnpm（サプライチェーン攻撃対策）
+
+**`npm install` は使わない。** 防御設定が `pnpm-workspace.yaml` にあり、npm ではまるごと無効になる。
+
+```bash
+corepack enable   # package.json の packageManager 指定の pnpm が自動で使われる
+```
+
+`recorder/` と `web/` はそれぞれ独立した pnpm プロジェクト（lockfile も別）。効いている防御は2つ:
+
+| 設定 | 効果 |
+|---|---|
+| `allowBuilds` | 依存の install/postinstall スクリプトを既定で拒否し、明示許可したものだけ実行する |
+| `minimumReleaseAge: 10080` | 公開から7日未満のバージョンを解決しない（単位は**分**。`7` と書くと7分になる） |
+
+依存を追加して `ERR_PNPM_IGNORED_BUILDS` が出たら、そのパッケージがなぜビルドを要るのか確認したうえで `pnpm-workspace.yaml` の `allowBuilds` に追記する（`dangerouslyAllowAllBuilds` は使わない）。**`@discordjs/opus` の許可を外すと録音が壊れる。**
+
+急ぎで7日未満の版が必要なときだけ `pnpm add <pkg> --allow-any-release-age`。
+
 ## recorder のセットアップ
 
 ```bash
 cd recorder
-npm install
+pnpm install
 cp .env.example .env   # 値を埋める
-npm run register       # スラッシュコマンドをDiscordへ登録
-npm run start          # Bot起動
+pnpm run register      # スラッシュコマンドをDiscordへ登録
+pnpm run start         # Bot起動
 ```
 
 ### 必要な環境変数（`recorder/.env`）
@@ -90,17 +109,17 @@ flyctl ssh console -C "sh -c 'rm -f /data/recordings/*/*.pcm && df -h /data'"
 
 ```bash
 cd web
-npm install
-npx wrangler login
-npx wrangler r2 bucket create <your-bucket>
-npx wrangler d1 create <your-db>          # 出力された database_id を wrangler.toml に設定
-npx wrangler d1 execute <your-db> --remote --file=schema.sql
+pnpm install
+pnpm exec wrangler login
+pnpm exec wrangler r2 bucket create <your-bucket>
+pnpm exec wrangler d1 create <your-db>          # 出力された database_id を wrangler.toml に設定
+pnpm exec wrangler d1 execute <your-db> --remote --file=schema.sql
 # secrets:
-npx wrangler secret put SESSION_SECRET    # ランダムな32バイトhex等
-npx wrangler secret put INGEST_SECRET     # recorder と同じ値
-npx wrangler secret put DISCORD_CLIENT_ID
-npx wrangler secret put DISCORD_CLIENT_SECRET
-npm run deploy                            # 出力された workers.dev URL を WEB_BASE_URL に設定
+pnpm exec wrangler secret put SESSION_SECRET    # ランダムな32バイトhex等
+pnpm exec wrangler secret put INGEST_SECRET     # recorder と同じ値
+pnpm exec wrangler secret put DISCORD_CLIENT_ID
+pnpm exec wrangler secret put DISCORD_CLIENT_SECRET
+pnpm run deploy                                 # 出力された workers.dev URL を WEB_BASE_URL に設定
 ```
 
 `wrangler.toml` の `database_id` と `WEB_BASE_URL` は自分の値に置き換える。

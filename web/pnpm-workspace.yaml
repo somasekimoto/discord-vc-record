@@ -1,0 +1,16 @@
+# pnpm の設定（サプライチェーン攻撃対策）。方針は recorder/pnpm-workspace.yaml と同じ。
+#
+# minimumReleaseAge: 公開から一定時間が経ったバージョンだけを解決対象にする。単位は「分」。7日 = 10080分。
+#   （7 と書くと7分になるので注意。pnpm 11 の既定は無効なので明示指定が必要。）
+#
+# allowBuilds: ビルドスクリプトはホワイトリスト方式。
+#   esbuild / workerd: wrangler が直接依存する Cloudflare 純正ツールチェーン。
+#     postinstall でプラットフォーム別バイナリを取得する。許可しないと dev / deploy が動かない。
+#   sharp: miniflare 経由の推移的依存で、Cloudflare Images のローカルエミュレーション用。
+#     このプロジェクトは Images を使わないためビルド不要（false で明示的に拒否する）。
+#     将来 Images を使うなら true にする。
+minimumReleaseAge: 10080
+allowBuilds:
+  esbuild: true
+  workerd: true
+  sharp: false
