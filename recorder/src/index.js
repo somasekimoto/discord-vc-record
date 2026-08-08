@@ -18,6 +18,7 @@ import {
   START_BUTTON_PREFIX,
 } from './join-prompt.js';
 import { AutoStopController, parseEmptyDelayMs } from './auto-stop.js';
+import { purgeOldSessions, parseRetentionMs, checkDiskSpace } from './cleanup.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RECORDINGS_DIR = process.env.RECORDINGS_DIR ?? join(__dirname, '..', 'recordings');
@@ -58,8 +59,28 @@ if (autoStop) {
   console.log(`[bot] auto-stop enabled: empty VC for ${autoStopDelayMs / 1000}s`);
 }
 
+// 保持期間を過ぎた録音データを削除(RECORDINGS_RETENTION_DAYS=0 で無効)。
+// 正本は R2 側。ローカルは reupload.js での復旧用の控えなので期限付きでよい。
+const retentionMs = parseRetentionMs(process.env.RECORDINGS_RETENTION_DAYS);
+const PURGE_INTERVAL_MS = 6 * 60 * 60 * 1000; // 長時間稼働で溜まるのを防ぐ定期実行
+if (retentionMs > 0) {
+  console.log(`[bot] retention enabled: purge recordings older than ${retentionMs / 86400_000}d`);
+}
+
+/** 録音中のセッションを巻き込まないよう除外して掃除する。 */
+function purgeRecordings() {
+  if (retentionMs <= 0) return Promise.resolve();
+  const active = [...sessions.byGuild.values()].map((s) => s.id);
+  return purgeOldSessions(RECORDINGS_DIR, { retentionMs, keep: active }).catch((err) => {
+    console.error('[bot] purge error:', err);
+  });
+}
+
 client.once('clientReady', () => {
   console.log(`[bot] logged in as ${client.user.tag}`);
+  purgeRecordings();
+  // unref: 掃除待ちでプロセスの終了を妨げない
+  setInterval(purgeRecordings, PURGE_INTERVAL_MS).unref();
 });
 
 // VC への参加/退出を録音中セッションへ流す(participants の根拠)
@@ -92,7 +113,11 @@ client.on('interactionCreate', async (interaction) => {
   }
   if (interaction.isButton() && interaction.customId.startsWith(`${START_BUTTON_PREFIX}:`)) {
     try {
-      await handleStartButton(interaction, { sessions, startSession });
+      await handleStartButton(interaction, {
+        sessions,
+        startSession,
+        checkDisk: () => checkDiskSpace(RECORDINGS_DIR),
+      });
     } catch (err) {
       console.error('[bot] start button error:', err);
     }
@@ -140,9 +165,11 @@ async function handleRecord(interaction) {
       notifyChannelId: interaction.channelId, // 自動停止の通知先(このコマンドを打ったチャンネル)
     });
 
+    const { warning } = await checkDiskSpace(RECORDINGS_DIR);
     await interaction.editReply(
       `🔴 録音を開始しました（セッション: \`${session.id}\`）\n` +
-        `このVCの会話を話者ごとに記録します。終了するには \`/rec stop\` を実行してください。`,
+        `このVCの会話を話者ごとに記録します。終了するには \`/rec stop\` を実行してください。` +
+        (warning ? `\n\n${warning}` : ''),
     );
     return;
   }

@@ -127,8 +127,9 @@ export class JoinPromptNotifier {
  * @param {object} deps
  * @param {{get:(guildId:string)=>object|undefined}} deps.sessions SessionManager
  * @param {(opts:object)=>Promise<object>} deps.startSession 録音開始(コマンド経路と共通)
+ * @param {() => Promise<{warning:string|null}>} [deps.checkDisk] 空き容量の警告(任意)
  */
-export async function handleStartButton(interaction, { sessions, startSession }) {
+export async function handleStartButton(interaction, { sessions, startSession, checkDisk }) {
   const channelId = interaction.customId.split(':')[1];
   const guildId = interaction.guildId;
 
@@ -172,11 +173,13 @@ export async function handleStartButton(interaction, { sessions, startSession })
     return false;
   }
 
+  const warning = checkDisk ? (await checkDisk().catch(() => ({}))).warning : null;
   await interaction.message
     ?.edit({
       content:
         `🔴 録音を開始しました（セッション: \`${session.id}\`）\n` +
-        `このVCの会話を話者ごとに記録します。終了するには \`/rec stop\` を実行してください。`,
+        `このVCの会話を話者ごとに記録します。終了するには \`/rec stop\` を実行してください。` +
+        (warning ? `\n\n${warning}` : ''),
       components: [],
     })
     .catch(() => {});
