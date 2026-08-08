@@ -1,4 +1,10 @@
 node_modules/
+
+# パッケージマネージャは pnpm に統一（サプライチェーン対策の設定が pnpm-workspace.yaml にあり、
+# npm install だとその防御が丸ごと効かないため）。誤って生成した lockfile をコミットさせない。
+package-lock.json
+yarn.lock
+
 .env
 .env.local
 recorder/recordings/

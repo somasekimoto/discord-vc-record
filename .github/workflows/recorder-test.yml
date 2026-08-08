@@ -17,12 +17,17 @@ jobs:
         working-directory: recorder
     steps:
       - uses: actions/checkout@v4
+      # pnpm は package.json の packageManager 指定に従って corepack が用意する。
+      # setup-node の cache: pnpm より前に pnpm が居る必要があるのでこの順番。
+      - name: Enable corepack
+        run: corepack enable
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: recorder/package-lock.json
+          cache: pnpm
+          cache-dependency-path: recorder/pnpm-lock.yaml
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
-      - run: npm ci
-      - run: npm test
+      # --frozen-lockfile: lockfile と package.json がズレていたら CI を落とす
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test

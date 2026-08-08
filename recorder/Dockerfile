@@ -10,9 +10,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# 依存だけ先にインストール（レイヤキャッシュ）
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+# pnpm は package.json の packageManager 指定に従って corepack が用意する。
+RUN corepack enable
+
+# 依存だけ先にインストール（レイヤキャッシュ）。
+# pnpm-workspace.yaml には allowBuilds（ビルド許可リスト）が入っており、
+# これが無いと @discordjs/opus のネイティブビルドが拒否されて録音が壊れる。必ず一緒にコピーする。
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile --prod
 
 # アプリ本体
 COPY src ./src
