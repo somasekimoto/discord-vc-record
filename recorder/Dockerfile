@@ -11,7 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # pnpm は package.json の packageManager 指定に従って corepack が用意する。
-RUN corepack enable
+# pnpm 12 (Rust版) は bin レイアウトが変わり Node 同梱の古い corepack では解決できないため、
+# corepack を最新へ更新してから enable する。
+RUN npm install -g corepack@latest && corepack enable
 
 # 依存だけ先にインストール（レイヤキャッシュ）。
 # pnpm-workspace.yaml には allowBuilds（ビルド許可リスト）が入っており、

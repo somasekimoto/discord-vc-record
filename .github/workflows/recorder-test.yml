@@ -19,8 +19,10 @@ jobs:
       - uses: actions/checkout@v4
       # pnpm は package.json の packageManager 指定に従って corepack が用意する。
       # setup-node の cache: pnpm より前に pnpm が居る必要があるのでこの順番。
+      # pnpm 12 (Rust版) は bin レイアウトが変わり古い corepack では解決できないため、
+      # corepack を最新へ更新してから enable する。
       - name: Enable corepack
-        run: corepack enable
+        run: npm install -g corepack@latest && corepack enable
       - uses: actions/setup-node@v4
         with:
           node-version: 22
