@@ -1,5 +1,5 @@
 /**
- * ingest.js — recorder からの取り込みエンドポイント
+ * ingest.ts — recorder からの取り込みエンドポイント
  *
  * recorder(Fly.io) が録音終了後にここへ POST し、
  * 音声/文字起こしを R2 に、メタデータを D1 に保存する。
@@ -25,13 +25,15 @@
  * recorder がクラッシュして abort されなかったマルチパートは、R2 バケット既定の
  * ライフサイクル(incomplete multipart を7日で自動破棄)に掃除を任せる。
  */
-import { upsertSession, insertParticipants, insertTracks } from './db.js';
+import { legacyPayload, errorMessage } from './boundaries.ts';
+import type { IngestMeta } from './types.ts';
+import { upsertSession, insertParticipants, insertTracks } from './db.ts';
 
 function unauthorized() {
   return new Response('unauthorized', { status: 401 });
 }
 
-function checkIngestAuth(req, env) {
+function checkIngestAuth(req: Request, env: Pick<Env, 'INGEST_SECRET'>) {
   const auth = req.headers.get('Authorization') || '';
   return Boolean(env.INGEST_SECRET) && auth === `Bearer ${env.INGEST_SECRET}`;
 }
@@ -41,39 +43,40 @@ const MAX_PART_NUMBER = 10000;
 
 // guildId/userId は R2 キーに補間されるため Discord snowflake(数字のみ)に限定し、
 // sessionId も `/` 等でキー階層を壊せない文字種に限定する
-const isSnowflake = (s) => typeof s === 'string' && /^\d{1,32}$/.test(s);
-const isValidSessionId = (s) => typeof s === 'string' && /^[\w.-]{1,128}$/.test(s);
+const isSnowflake = (s: unknown): s is string => typeof s === 'string' && /^\d{1,32}$/.test(s);
+const isValidSessionId = (s: unknown): s is string => typeof s === 'string' && /^[\w.-]{1,128}$/.test(s);
 // 音声の userId: 話者の snowflake か、全体ミックスを表す固定値 "mixed"
-const isValidAudioUserId = (s) => isSnowflake(s) || s === 'mixed';
+const isValidAudioUserId = (s: unknown): s is string => isSnowflake(s) || s === 'mixed';
 
 /**
  * R2 の例外がクライアント起因(リトライで直らない)かの粗い分類。
  * R2 は HTTP ステータスを露出しないためメッセージで判定する。
  * 判定できないものは 500 のままにして recorder 側のリトライに委ねる。
  */
-const isR2ClientError = (err) =>
+const isR2ClientError = (err: unknown) =>
   /does not exist|no such upload|not found|invalid|malformed|etag|already|too (small|large|many)/i
-    .test(err?.message || '');
+    .test(String(errorMessage(err) || ''));
 
 /** req.json() の失敗を 500 でなく 400 にするため null に落とす。 */
-async function readJson(req) {
+async function readJson(req: Request) {
   try {
-    return await req.json();
+    const raw: unknown = await req.json();
+    return legacyPayload('audio', raw);
   } catch {
     return null;
   }
 }
 
 /** sessionId から R2 の音声キーを組み立てる。セッション未登録なら null。 */
-async function audioKeyFor(env, sessionId, userId) {
-  const row = await env.DB.prepare('SELECT guild_id FROM sessions WHERE id = ?').bind(sessionId).first();
+async function audioKeyFor(env: Pick<Env, 'DB'>, sessionId: string, userId: string) {
+  const row = await env.DB.prepare('SELECT guild_id FROM sessions WHERE id = ?').bind(sessionId).first<{ guild_id: string }>();
   if (!row) return null;
   const filename = userId === 'mixed' ? 'mixed.m4a' : `${userId}.wav`;
   return `sessions/${row.guild_id}/${sessionId}/audio/${filename}`;
 }
 
 /** 共通の入力検証 + キー導出。失敗時は Response、成功時は { key } を返す。 */
-async function resolveAudioKey(env, sessionId, userId) {
+async function resolveAudioKey(env: Pick<Env, 'DB'>, sessionId: unknown, userId: unknown) {
   if (!isValidSessionId(sessionId) || !isValidAudioUserId(userId)) {
     return new Response('invalid sessionId/userId', { status: 400 });
   }
@@ -82,7 +85,7 @@ async function resolveAudioKey(env, sessionId, userId) {
   return { key };
 }
 
-export async function handleAudioInit(req, env) {
+export async function handleAudioInit(req: Request, env: Env) {
   if (!checkIngestAuth(req, env)) return unauthorized();
   const body = await readJson(req);
   if (!body) return new Response('invalid json', { status: 400 });
@@ -95,7 +98,7 @@ export async function handleAudioInit(req, env) {
   return Response.json({ key: r.key, uploadId: upload.uploadId });
 }
 
-export async function handleAudioPart(req, env) {
+export async function handleAudioPart(req: Request, env: Env) {
   if (!checkIngestAuth(req, env)) return unauthorized();
   const url = new URL(req.url);
   const sessionId = url.searchParams.get('sessionId');
@@ -115,12 +118,12 @@ export async function handleAudioPart(req, env) {
   } catch (err) {
     // 不正/失効した uploadId 等のクライアント起因のみ 400。
     // R2 の一時的な内部エラーは 500 のまま返し recorder のリトライに委ねる
-    if (isR2ClientError(err)) return new Response(`upload part failed: ${err.message}`, { status: 400 });
+    if (isR2ClientError(err)) return new Response(`upload part failed: ${errorMessage(err)}`, { status: 400 });
     throw err;
   }
 }
 
-export async function handleAudioComplete(req, env) {
+export async function handleAudioComplete(req: Request, env: Env) {
   if (!checkIngestAuth(req, env)) return unauthorized();
   const body = await readJson(req);
   if (!body) return new Response('invalid json', { status: 400 });
@@ -145,7 +148,7 @@ export async function handleAudioComplete(req, env) {
     // 過去アップロード済みのトラックを reupload 中に新しい complete が本当に失敗した
     // 場合も 200 になりうるが、同一話者wavの同一キーなので実害は取り置きの旧データに留まる。
     if (!(await env.BUCKET.head(r.key))) {
-      if (isR2ClientError(err)) return new Response(`complete failed: ${err.message}`, { status: 400 });
+      if (isR2ClientError(err)) return new Response(`complete failed: ${errorMessage(err)}`, { status: 400 });
       throw err;
     }
     alreadyCompleted = true;
@@ -156,7 +159,7 @@ export async function handleAudioComplete(req, env) {
   return Response.json({ ok: true, key: r.key, alreadyCompleted });
 }
 
-export async function handleAudioAbort(req, env) {
+export async function handleAudioAbort(req: Request, env: Env) {
   if (!checkIngestAuth(req, env)) return unauthorized();
   const body = await readJson(req);
   if (!body) return new Response('invalid json', { status: 400 });
@@ -172,15 +175,16 @@ export async function handleAudioAbort(req, env) {
   return Response.json({ ok: true });
 }
 
-export async function handleIngest(req, env) {
+export async function handleIngest(req: Request, env: Env) {
   if (!checkIngestAuth(req, env)) return unauthorized();
 
   const form = await req.formData();
   const metaRaw = form.get('meta');
   if (!metaRaw) return new Response('missing meta', { status: 400 });
-  let meta;
+  let meta: IngestMeta;
   try {
-    meta = JSON.parse(typeof metaRaw === 'string' ? metaRaw : await metaRaw.text());
+    const raw: unknown = JSON.parse(typeof metaRaw === 'string' ? metaRaw : await metaRaw.text());
+    meta = legacyPayload('meta', raw);
   } catch {
     return new Response('invalid meta json', { status: 400 });
   }

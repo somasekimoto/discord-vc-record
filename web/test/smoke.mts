@@ -1,13 +1,13 @@
 /**
- * smoke.mjs — /ingest → audio init/part/complete/abort のE2Eスモーク
+ * smoke.mts — /ingest → audio init/part/complete/abort のE2Eスモーク
  *
  * ローカルの wrangler dev(miniflare の D1/R2)相手に一連の取り込みフローを検証する。
  *
  * 実行手順:
  *   cd web
- *   npx wrangler d1 execute vc-record --local --file=schema.sql
- *   npx wrangler dev --port 8788 --var INGEST_SECRET:smoke-test-secret
- *   node test/smoke.mjs
+ *   pnpm exec wrangler d1 execute vc-record --config wrangler.ci.toml --local --file=schema.sql
+ *   pnpm exec wrangler dev --config wrangler.ci.toml --port 8788 --var INGEST_SECRET:smoke-test-secret
+ *   node test/smoke.mts
  *
  * 検証項目:
  *  1. meta先行 /ingest → 200
@@ -26,6 +26,8 @@
  *     ボディ上限100MB)をチャンク分割で通す。単一リクエストでは不可能なサイズが
  *     分割なら通ることと、等サイズパート則(最終パートのみ小)の遵守を実寸で検証
  */
+import { readObject, readUpload } from './http.mts';
+
 const BASE = process.env.SMOKE_BASE_URL || 'http://127.0.0.1:8788';
 const SECRET = process.env.SMOKE_INGEST_SECRET || 'smoke-test-secret';
 const AUTH = { Authorization: `Bearer ${SECRET}` };
@@ -33,12 +35,12 @@ const SID = 'smoketest-session-1';
 const UID = '123456789012345678';
 
 let failed = 0;
-const check = (name, cond, detail = '') => {
+const check = (name: string, cond: boolean, detail = '') => {
   console.log(`${cond ? 'PASS' : 'FAIL'}: ${name}${detail ? ` (${detail})` : ''}`);
   if (!cond) failed++;
 };
 
-const metaForm = (meta) => {
+const metaForm = (meta: unknown) => {
   const form = new FormData();
   form.set('meta', JSON.stringify(meta));
   form.set('transcript_md', new Blob(['# smoke'], { type: 'text/markdown' }), 'transcript.md');
@@ -64,26 +66,26 @@ res = await fetch(`${BASE}/ingest/audio/init`, {
   body: JSON.stringify({ sessionId: SID, userId: UID }),
 });
 check('audio init 200', res.status === 200);
-const { uploadId, key } = await res.json();
+const { uploadId, key } = await readUpload(res);
 check('init returns uploadId', Boolean(uploadId));
 
 const part1 = new Uint8Array(5 * 1024 * 1024).fill(1); // 5MiB (R2最小パート)
 const part2 = new Uint8Array(1024).fill(2);            // 端数
-const parts = [];
+const parts: unknown[] = [];
 for (const [i, buf] of [part1, part2].entries()) {
   const q = new URLSearchParams({ sessionId: SID, userId: UID, uploadId, partNumber: String(i + 1) });
   res = await fetch(`${BASE}/ingest/audio/part?${q}`, {
     method: 'PUT', headers: { ...AUTH, 'Content-Type': 'application/octet-stream' }, body: buf,
   });
   check(`audio part ${i + 1} 200`, res.status === 200, `status=${res.status} ${await res.clone().text()}`);
-  parts.push(await res.json());
+  parts.push(await readObject(res));
 }
 
 const completeBody = JSON.stringify({ sessionId: SID, userId: UID, uploadId, parts, durationSec: 12.3 });
 res = await fetch(`${BASE}/ingest/audio/complete`, {
   method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' }, body: completeBody,
 });
-const c1 = await res.json().catch(() => ({}));
+const c1 = await readObject(res).catch((): Record<string, unknown> => ({}));
 check('audio complete 200', res.status === 200, JSON.stringify(c1));
 check('complete returns key', c1.key === key);
 
@@ -91,7 +93,7 @@ check('complete returns key', c1.key === key);
 res = await fetch(`${BASE}/ingest/audio/complete`, {
   method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' }, body: completeBody,
 });
-const c2 = await res.json().catch(() => ({}));
+const c2 = await readObject(res).catch((): Record<string, unknown> => ({}));
 check('complete retry 200 (idempotent)', res.status === 200 && c2.alreadyCompleted === true, JSON.stringify(c2));
 
 // 3.5 全体ミックス(userId="mixed") → キーは audio/mixed.m4a
@@ -100,7 +102,7 @@ res = await fetch(`${BASE}/ingest/audio/init`, {
   body: JSON.stringify({ sessionId: SID, userId: 'mixed' }),
 });
 check('mixed init 200', res.status === 200, `status=${res.status}`);
-const mixed = await res.json();
+const mixed = await readUpload(res);
 check('mixed key is audio/mixed.m4a', typeof mixed.key === 'string' && mixed.key.endsWith('/audio/mixed.m4a'), mixed.key);
 
 const mq = new URLSearchParams({ sessionId: SID, userId: 'mixed', uploadId: mixed.uploadId, partNumber: '1' });
@@ -109,13 +111,13 @@ res = await fetch(`${BASE}/ingest/audio/part?${mq}`, {
   body: new Uint8Array(1024).fill(7), // 単一パートは 5MiB 未満でも可(最終パート扱い)
 });
 check('mixed part 200', res.status === 200, `status=${res.status} ${await res.clone().text()}`);
-const mixedPart = await res.json();
+const mixedPart = await readObject(res);
 
 res = await fetch(`${BASE}/ingest/audio/complete`, {
   method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' },
   body: JSON.stringify({ sessionId: SID, userId: 'mixed', uploadId: mixed.uploadId, parts: [mixedPart], durationSec: 3600 }),
 });
-const mc = await res.json().catch(() => ({}));
+const mc = await readObject(res).catch((): Record<string, unknown> => ({}));
 check('mixed complete 200', res.status === 200 && mc.key === mixed.key, JSON.stringify(mc));
 
 // 4. パス脱出 userId → 400
@@ -181,10 +183,10 @@ if (process.env.SMOKE_BIG === '1') {
     body: JSON.stringify({ sessionId: SID, userId: UID2 }),
   });
   check('big init 200', res.status === 200, `status=${res.status}`);
-  const big = await res.json();
+  const big = await readUpload(res);
 
   const MIB = 1024 * 1024;
-  const bigParts = [];
+  const bigParts: unknown[] = [];
   for (const [i, size] of [40 * MIB, 40 * MIB, 25 * MIB].entries()) {
     const q2 = new URLSearchParams({ sessionId: SID, userId: UID2, uploadId: big.uploadId, partNumber: String(i + 1) });
     res = await fetch(`${BASE}/ingest/audio/part?${q2}`, {
@@ -192,14 +194,14 @@ if (process.env.SMOKE_BIG === '1') {
       body: new Uint8Array(size).fill(i + 1),
     });
     check(`big part ${i + 1} (${size / MIB}MiB) 200`, res.status === 200, `status=${res.status} ${await res.clone().text()}`);
-    bigParts.push(await res.json());
+    bigParts.push(await readObject(res));
   }
 
   res = await fetch(`${BASE}/ingest/audio/complete`, {
     method: 'POST', headers: { ...AUTH, 'Content-Type': 'application/json' },
     body: JSON.stringify({ sessionId: SID, userId: UID2, uploadId: big.uploadId, parts: bigParts, durationSec: 6300 }),
   });
-  const cb = await res.json().catch(() => ({}));
+  const cb = await readObject(res).catch((): Record<string, unknown> => ({}));
   check('big complete 200 (105MiB total)', res.status === 200 && cb.ok === true, JSON.stringify(cb));
 }
 

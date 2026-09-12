@@ -1,5 +1,5 @@
 /**
- * index.js — WebUI + 認証 + 配信(Cloudflare Worker)
+ * index.ts — WebUI + 認証 + 配信(Cloudflare Worker)
  *
  * ルート:
  *   GET  /                      ギルド一覧の案内(ログイン誘導)
@@ -11,12 +11,14 @@
  *
  * 認可は毎リクエスト Discord に問い合わせてロール保有を確認する。
  */
-import { getSession, handleLogin, handleCallback, handleLogout } from './auth.js';
-import { canAccessGuild } from './authz.js';
-import { handleIngest, handleAudioInit, handleAudioPart, handleAudioComplete, handleAudioAbort } from './ingest.js';
-import { listGuildsWithSessions, listChannels, listSessions, getSession as getSessionRow, getParticipants, getTracks, setRequiredRole } from './db.js';
+import { getSession, handleLogin, handleCallback, handleLogout } from './auth.ts';
+import { canAccessGuild } from './authz.ts';
+import { handleIngest, handleAudioInit, handleAudioPart, handleAudioComplete, handleAudioAbort } from './ingest.ts';
+import { listGuildsWithSessions, listChannels, listSessions, getSession as getSessionRow, getParticipants, getTracks, setRequiredRole } from './db.ts';
 
-const html = (body, title = 'VC Record') =>
+import { legacyPayload, errorMessage } from './boundaries.ts';
+
+const html = (body: string, title = 'VC Record') =>
   new Response(
     `<!doctype html><html lang="ja"><head><meta charset="utf-8">` +
       `<meta name="viewport" content="width=device-width, initial-scale=1">` +
@@ -29,11 +31,11 @@ const html = (body, title = 'VC Record') =>
     { headers: { 'Content-Type': 'text/html; charset=utf-8' } },
   );
 
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const fmtDate = (ms) => (ms ? new Date(ms).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '-');
+const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
+const fmtDate = (ms: number | null) => (ms ? new Date(ms).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '-');
 
-function denyMessage(reason, guildId) {
-  const map = {
+function denyMessage(reason: string | undefined, guildId: string) {
+  const map: Record<string, [string, string]> = {
     not_logged_in: ['ログインが必要です', `<a class="btn" href="/login?next=${encodeURIComponent(`/g/${guildId}`)}">Discordでログイン</a>`],
     no_role_configured: ['このサーバーは閲覧ロールが未設定です。管理者が <code>/setup</code> で設定してください。', ''],
     not_a_member: ['このDiscordサーバーのメンバーではありません。', ''],
@@ -41,12 +43,12 @@ function denyMessage(reason, guildId) {
     rate_limited: ['Discordへの問い合わせが混み合っています。数秒待ってから再読み込みしてください。', `<a class="btn" href="/g/${guildId}">再読み込み</a>`],
     token_expired: ['セッションの有効期限が切れました。', `<a class="btn" href="/login?next=${encodeURIComponent(`/g/${guildId}`)}">再ログイン</a>`],
   };
-  const [msg, action] = map[reason] || [`アクセスできません。(${esc(reason || 'unknown')})`, ''];
+  const [msg, action] = (reason ? map[reason] : undefined) || [`アクセスできません。(${esc(reason || 'unknown')})`, ''];
   return html(`<h1>閲覧できません</h1><p>${msg}</p>${action}`);
 }
 
 export default {
-  async fetch(req, env) {
+  async fetch(req: Request, env: Env) {
     const url = new URL(req.url);
     const path = url.pathname;
 
@@ -67,7 +69,8 @@ export default {
         if (!env.INGEST_SECRET || auth !== `Bearer ${env.INGEST_SECRET}`) {
           return new Response('unauthorized', { status: 401 });
         }
-        const { guildId, requiredRoleId } = await req.json();
+        const raw: unknown = await req.json();
+        const { guildId, requiredRoleId } = legacyPayload('config', raw);
         if (!guildId || !requiredRoleId) return new Response('missing fields', { status: 400 });
         await setRequiredRole(env.DB, guildId, requiredRoleId);
         return Response.json({ ok: true });
@@ -87,7 +90,8 @@ export default {
         const guildsRes = await fetch('https://discord.com/api/users/@me/guilds', {
           headers: { Authorization: `Bearer ${session.accessToken}` },
         });
-        const myGuilds = guildsRes.ok ? await guildsRes.json() : [];
+        const rawGuilds: unknown = guildsRes.ok ? await guildsRes.json() : [];
+        const myGuilds = legacyPayload('guilds', rawGuilds);
         const nameById = new Map(myGuilds.map((g) => [g.id, g.name]));
 
         const recorded = await listGuildsWithSessions(env.DB);
@@ -244,7 +248,7 @@ export default {
 
       return new Response('not found', { status: 404 });
     } catch (err) {
-      return new Response(`error: ${err.message}`, { status: 500 });
+      return new Response(`error: ${errorMessage(err)}`, { status: 500 });
     }
   },
-};
+} satisfies ExportedHandler<Env>;

@@ -1,0 +1,17 @@
+# 型生成・ローカル検証専用。本番 deploy に使用しない。
+name = "discord-vc-record-web-ci"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "vc-record"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "vc-record"
+database_id = "00000000-0000-0000-0000-000000000000" # gitleaks:allow ローカル専用ダミー
+
+[vars]
+WEB_BASE_URL = "http://127.0.0.1:8788"
