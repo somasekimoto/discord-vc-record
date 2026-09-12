@@ -15,6 +15,7 @@
  * どの掃除も失敗は握りつぶしてログに残すだけにする。掃除の失敗で録音や
  * 文字起こしを巻き込むと本末転倒なため。
  */
+import { errorMessage, errorCode } from './types.ts';
 import { readdir, stat, unlink, rm, statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -37,14 +38,14 @@ export const LOW_SPACE_THRESHOLD_BYTES = 1.5 * 1024 ** 3;
  * @param {number} [threshold]
  * @returns {Promise<{ok:boolean, freeBytes:number|null, warning:string|null}>}
  */
-export async function checkDiskSpace(dir, threshold = LOW_SPACE_THRESHOLD_BYTES) {
+export async function checkDiskSpace(dir: string, threshold = LOW_SPACE_THRESHOLD_BYTES) {
   let freeBytes;
   try {
     const st = await statfs(dir);
     freeBytes = st.bavail * st.bsize;
   } catch (err) {
     // 容量が読めないだけで録音を止める理由にはならない
-    console.error(`[cleanup] statfs failed for ${dir}: ${err.message}`);
+    console.error(`[cleanup] statfs failed for ${dir}: ${errorMessage(err)}`);
     return { ok: true, freeBytes: null, warning: null };
   }
   if (freeBytes >= threshold) return { ok: true, freeBytes, warning: null };
@@ -61,7 +62,7 @@ export async function checkDiskSpace(dir, threshold = LOW_SPACE_THRESHOLD_BYTES)
  * RECORDINGS_RETENTION_DAYS(日) をミリ秒にパースする。
  * 未設定・不正値は既定、0 は自動削除の無効を意味する。
  */
-export function parseRetentionMs(raw) {
+export function parseRetentionMs(raw: string | null | undefined) {
   if (raw == null || raw === '') return DEFAULT_RETENTION_DAYS * 86400_000;
   const days = Number(raw);
   if (!Number.isFinite(days) || days < 0) return DEFAULT_RETENTION_DAYS * 86400_000;
@@ -78,14 +79,14 @@ export function parseRetentionMs(raw) {
  * @param {string} dir セッションディレクトリ
  * @returns {Promise<{deleted:number, freedBytes:number}>}
  */
-export async function deletePcmFiles(dir) {
+export async function deletePcmFiles(dir: string) {
   let deleted = 0;
   let freedBytes = 0;
   let entries;
   try {
     entries = await readdir(dir);
   } catch (err) {
-    console.error(`[cleanup] failed to read ${dir}: ${err.message}`);
+    console.error(`[cleanup] failed to read ${dir}: ${errorMessage(err)}`);
     return { deleted, freedBytes };
   }
 
@@ -99,7 +100,7 @@ export async function deletePcmFiles(dir) {
       deleted += 1;
       freedBytes += size;
     } catch (err) {
-      console.error(`[cleanup] failed to delete ${full}: ${err.message}`);
+      console.error(`[cleanup] failed to delete ${full}: ${errorMessage(err)}`);
     }
   }
   if (deleted > 0) {
@@ -122,8 +123,8 @@ export async function deletePcmFiles(dir) {
  * @param {Set<string>|string[]} [opts.keep] 進行中などで消してはいけないセッションID
  * @returns {Promise<{deleted:string[], freedBytes:number}>}
  */
-export async function purgeOldSessions(baseDir, { retentionMs, now = Date.now, keep = [] } = {}) {
-  const deleted = [];
+export async function purgeOldSessions(baseDir: string, { retentionMs, now = Date.now, keep = [] }: { retentionMs?: number; now?: () => number; keep?: Set<string> | string[] } = {}) {
+  const deleted: string[] = [];
   let freedBytes = 0;
   if (!retentionMs) return { deleted, freedBytes }; // 0 は無効
 
@@ -133,7 +134,7 @@ export async function purgeOldSessions(baseDir, { retentionMs, now = Date.now, k
     entries = await readdir(baseDir, { withFileTypes: true });
   } catch (err) {
     // 初回起動でディレクトリが無い場合を含む。掃除できなくても起動は続ける。
-    if (err.code !== 'ENOENT') console.error(`[cleanup] failed to read ${baseDir}: ${err.message}`);
+    if (errorCode(err) !== 'ENOENT') console.error(`[cleanup] failed to read ${baseDir}: ${errorMessage(err)}`);
     return { deleted, freedBytes };
   }
 
@@ -151,7 +152,7 @@ export async function purgeOldSessions(baseDir, { retentionMs, now = Date.now, k
       deleted.push(entry.name);
       freedBytes += size;
     } catch (err) {
-      console.error(`[cleanup] failed to purge ${full}: ${err.message}`);
+      console.error(`[cleanup] failed to purge ${full}: ${errorMessage(err)}`);
     }
   }
   if (deleted.length > 0) {
@@ -164,7 +165,7 @@ export async function purgeOldSessions(baseDir, { retentionMs, now = Date.now, k
 }
 
 /** ディレクトリ配下の合計バイト数(解放量のログ用。失敗しても 0 で続行)。 */
-async function dirSize(dir) {
+async function dirSize(dir: string): Promise<number> {
   let total = 0;
   let entries;
   try {
@@ -183,7 +184,7 @@ async function dirSize(dir) {
   return total;
 }
 
-export function formatBytes(bytes) {
+export function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes}B`;
   const units = ['KB', 'MB', 'GB', 'TB'];
   let v = bytes / 1024;

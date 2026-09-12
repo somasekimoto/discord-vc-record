@@ -5,8 +5,8 @@
  */
 import { spawn } from 'node:child_process';
 
-export function ffmpeg(args) {
-  return new Promise((resolve, reject) => {
+export function ffmpeg(args: string[]) {
+  return new Promise<void>((resolve, reject) => {
     const p = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args]);
     let err = '';
     p.stderr.on('data', (d) => (err += d));
