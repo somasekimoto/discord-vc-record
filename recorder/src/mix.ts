@@ -16,7 +16,7 @@ type MixTrack = Pick<Track, 'pcmPath' | 'bytes' | 'utterances'>;
 type MixSummary = Pick<SessionSnapshot, 'startedAt' | 'endedAt'>;
 export type MixPlan = NonNullable<ReturnType<typeof computeMixPlan>>;
 import { open, rm } from 'node:fs/promises';
-import { PCM_FORMAT } from './recorder.js';
+import { PCM_FORMAT } from './recorder.ts';
 import { ffmpeg } from './ffmpeg.ts';
 
 const BYTES_PER_SEC = PCM_FORMAT.sampleRate * PCM_FORMAT.channels * (PCM_FORMAT.bitsPerSample / 8);
@@ -39,7 +39,7 @@ const msToBytes = (ms: number) => alignDown(Math.max(0, Math.round((ms / 1000) *
  *   配置できる発話が1つも無ければ null(旧録音など utterances 未記録のトラックは除外)
  */
 export function computeMixPlan(summary: MixSummary, tracks: MixTrack[]) {
-  let totalBytes = msToBytes((summary.endedAt ?? summary.startedAt) - summary.startedAt);
+  let totalBytes = msToBytes(Number(summary.endedAt ?? summary.startedAt) - Number(summary.startedAt));
   const planTracks = [];
 
   for (const t of tracks) {
@@ -50,7 +50,7 @@ export function computeMixPlan(summary: MixSummary, tracks: MixTrack[]) {
       const srcEnd = alignDown(Math.min(u.byteEnd, t.bytes));
       const length = srcEnd - srcStart;
       if (length <= 0) continue;
-      const dstOffset = msToBytes(u.startedAt - summary.startedAt);
+      const dstOffset = msToBytes(u.startedAt - Number(summary.startedAt));
       segments.push({ srcStart, length, dstOffset });
       totalBytes = Math.max(totalBytes, dstOffset + length);
     }

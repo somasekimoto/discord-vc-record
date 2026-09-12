@@ -7,6 +7,12 @@
  * Phase 1 ではローカル FS への PCM 保存までを担当する。
  * R2/D1 アップロードと STT は pipeline.js (Phase 2) が録音終了後に処理する。
  */
+import type { Client, VoiceState } from 'discord.js';
+import type { VoiceConnection, VoiceReceiver } from '@discordjs/voice';
+import type { Readable } from 'node:stream';
+import type { Participant, Utterance, SessionSnapshot } from './types.ts';
+import type { StartOptions } from './ports.ts';
+import { errorMessage } from './types.ts';
 import { createWriteStream, statSync } from 'node:fs';
 import { mkdir, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -15,10 +21,8 @@ import { pipeline } from 'node:stream/promises';
 import {
   joinVoiceChannel,
   EndBehaviorType,
-  getVoiceConnection,
   entersState,
   VoiceConnectionStatus,
-  VoiceReceiver,
 } from '@discordjs/voice';
 import prism from 'prism-media';
 
@@ -35,7 +39,44 @@ export const RESUBSCRIBE_DELAY_MAX_MS = 5_000;
 /**
  * 1 つの録音セッション。1 つの VC につき最大 1 つ。
  */
+export interface RecordingOptions extends StartOptions {
+  client: Pick<Client, 'guilds'>;
+  baseDir: string;
+  resolveName?: (id: string) => string;
+}
+interface TrackState {
+  bytes: number;
+  utterances: Utterance[];
+  current: { startedAt: number; byteStart: number } | null;
+  streamErrors: number;
+}
+interface ReceiverPort {
+  speaking: {
+    users: Map<string, number>;
+    on(event: 'start' | 'end', listener: (userId: string) => void): unknown;
+  };
+  subscribe(userId: string, options: Parameters<VoiceReceiver['subscribe']>[1]): Readable;
+}
 export class RecordingSession {
+  declare client: RecordingOptions['client'];
+  declare guildId: string;
+  declare channelId: string;
+  declare startedByUserId: string;
+  declare notifyChannelId: string | null;
+  declare resolveName: (id: string) => string;
+  declare id: string;
+  declare dir: string;
+  declare connection: VoiceConnection | null;
+  declare receiver: ReceiverPort | null;
+  declare channelName: string | null;
+  declare startedAt: number | null;
+  declare endedAt: number | null;
+  declare status: 'idle' | 'recording' | 'stopping' | 'stopped' | 'failed';
+  declare activeStreams: Set<string>;
+  declare subscriptions: Map<string, Readable>;
+  declare participants: Map<string, Participant>;
+  declare pendingPipelines: Set<Promise<void>>;
+  declare trackStates: Map<string, TrackState>;
   /**
    * @param {object} opts
    * @param {import('discord.js').Client} opts.client
@@ -46,7 +87,7 @@ export class RecordingSession {
    * @param {string} [opts.notifyChannelId] /rec start が打たれたテキストチャンネル(自動停止の通知先)
    * @param {(id:string)=>string} [opts.resolveName] userId -> 表示名
    */
-  constructor({ client, guildId, channelId, startedByUserId, baseDir, notifyChannelId, resolveName }) {
+  constructor({ client, guildId, channelId, startedByUserId, baseDir, notifyChannelId, resolveName }: RecordingOptions) {
     this.client = client;
     this.guildId = guildId;
     this.channelId = channelId;
@@ -105,20 +146,20 @@ export class RecordingSession {
     } catch (err) {
       this.status = 'failed';
       this.connection.destroy();
-      throw new Error(`voice connection not ready (DAVE negotiation?): ${err.message}`);
+      throw new Error(`voice connection not ready (DAVE negotiation?): ${errorMessage(err)}`);
     }
 
     // 切断時の自動再接続。Discord 側の移動等で一時切断しても録音を継続させる。
     this.connection.on(VoiceConnectionStatus.Disconnected, async () => {
       try {
         await Promise.race([
-          entersState(this.connection, VoiceConnectionStatus.Signalling, 5_000),
-          entersState(this.connection, VoiceConnectionStatus.Connecting, 5_000),
+          entersState(this.connection!, VoiceConnectionStatus.Signalling, 5_000),
+          entersState(this.connection!, VoiceConnectionStatus.Connecting, 5_000),
         ]);
         // 再接続中: そのまま待つ
       } catch {
         // 復帰できなければ録音を終える
-        if (this.status === 'recording') this.connection.destroy();
+        if (this.status === 'recording') this.connection!.destroy();
       }
     });
 
@@ -127,7 +168,7 @@ export class RecordingSession {
     // 既に VC にいる人を participant として記録(start 時点のスナップショット)
     const channel = guild.channels.cache.get(this.channelId);
     this.channelName = channel?.name ?? null;
-    if (channel?.members) {
+    if (channel?.isVoiceBased()) {
       for (const [memberId, member] of channel.members) {
         if (member.user?.bot) continue;
         this._markJoined(memberId, member.displayName ?? member.user.username);
@@ -150,7 +191,7 @@ export class RecordingSession {
    * ただしストリームがエラー終了した場合(DAVE 遷移中の復号失敗が opus デコード
    * エラーになる等)は例外で、次の speaking start で再購読して録音を継続する。
    */
-  _onSpeakingStart(userId) {
+  _onSpeakingStart(userId: string) {
     if (this.status !== 'recording') return;
     if (!this.activeStreams.has(userId)) {
       this.activeStreams.add(userId);
@@ -165,7 +206,7 @@ export class RecordingSession {
     }
   }
 
-  _onSpeakingEnd(userId) {
+  _onSpeakingEnd(userId: string) {
     const st = this.trackStates.get(userId);
     if (!st?.current) return;
     // byteEnd 時点で decoder 内に未 flush の残り(高々数フレーム=数十ms)がありうるが、
@@ -174,13 +215,13 @@ export class RecordingSession {
     st.current = null;
   }
 
-  _subscribe(userId) {
+  _subscribe(userId: string) {
     // 喋った=参加者。スナップショットに無ければ途中参加として記録。
     if (!this.participants.has(userId)) {
       this._markJoined(userId, this.resolveName(userId));
     }
 
-    const opusStream = this.receiver.subscribe(userId, {
+    const opusStream = this.receiver!.subscribe(userId, {
       end: { behavior: EndBehaviorType.Manual }, // stop() まで終了しない
     });
     const decoder = new prism.opus.Decoder({
@@ -223,7 +264,7 @@ export class RecordingSession {
 
     const p = pipeline(opusStream, decoder, counter, out)
       .catch((err) => {
-        console.error(`[recorder] stream error user=${userId}: ${err.message}`);
+        console.error(`[recorder] stream error user=${userId}: ${errorMessage(err)}`);
         if (this.status !== 'recording') return; // stop() による destroy は失敗扱いしない
         st.streamErrors += 1;
         // 発話途中で死んだ場合はここで区間を閉じる。開いたままにすると、復旧までの
@@ -263,7 +304,7 @@ export class RecordingSession {
     this.pendingPipelines.add(p);
   }
 
-  _markJoined(userId, displayName) {
+  _markJoined(userId: string, displayName: string) {
     this.participants.set(userId, {
       userId,
       displayName,
@@ -273,7 +314,7 @@ export class RecordingSession {
   }
 
   /** voiceStateUpdate から呼ばれる: 対象 VC への参加/退出を記録。 */
-  handleVoiceStateUpdate(oldState, newState) {
+  handleVoiceStateUpdate(oldState: VoiceState, newState: VoiceState) {
     if (this.status !== 'recording') return;
     const userId = newState.id;
     if (newState.member?.user?.bot) return;
@@ -284,7 +325,7 @@ export class RecordingSession {
     if (joinedThis && !wasThis) {
       const name = newState.member?.displayName ?? userId;
       if (!this.participants.has(userId)) this._markJoined(userId, name);
-      else this.participants.get(userId).leftAt = null; // 再入室
+      else this.participants.get(userId)!.leftAt = null; // 再入室
     } else if (!joinedThis && wasThis) {
       const p = this.participants.get(userId);
       if (p && p.leftAt == null) p.leftAt = Date.now();
@@ -355,7 +396,7 @@ export class RecordingSession {
     return tracks;
   }
 
-  _summary() {
+  _summary(): SessionSnapshot {
     return {
       id: this.id,
       guildId: this.guildId,
@@ -387,18 +428,21 @@ export class NoActiveSessionError extends Error {
  * MVP では「1 ギルドにつき同時 1 セッション」を基本とする。
  */
 export class SessionManager {
-  constructor({ client, baseDir }) {
+  declare client: RecordingOptions['client'];
+  declare baseDir: string;
+  declare byGuild: Map<string, RecordingSession>;
+  constructor({ client, baseDir }: Pick<RecordingOptions, 'client' | 'baseDir'>) {
     this.client = client;
     this.baseDir = baseDir;
     /** @type {Map<string, RecordingSession>} guildId -> session */
     this.byGuild = new Map();
   }
 
-  get(guildId) {
+  get(guildId: string) {
     return this.byGuild.get(guildId);
   }
 
-  async start({ guildId, channelId, startedByUserId, notifyChannelId, resolveName }) {
+  async start({ guildId, channelId, startedByUserId, notifyChannelId, resolveName }: Omit<RecordingOptions, 'client' | 'baseDir'>) {
     if (this.byGuild.has(guildId)) {
       throw new Error('このサーバーでは既に録音中です。先に /rec stop してください。');
     }
@@ -421,7 +465,7 @@ export class SessionManager {
     return session;
   }
 
-  async stop(guildId) {
+  async stop(guildId: string) {
     const session = this.byGuild.get(guildId);
     if (!session) throw new NoActiveSessionError();
     // await 前に登録を外す。停止経路(自動停止/ボタン/コマンド)が競合したとき、
@@ -435,7 +479,7 @@ export class SessionManager {
   }
 
   /** どの VC で録音中かに関わらず、ギルド内の voiceStateUpdate を該当セッションへ流す。 */
-  routeVoiceState(oldState, newState) {
+  routeVoiceState(oldState: VoiceState, newState: VoiceState) {
     const guildId = newState.guild?.id ?? oldState.guild?.id;
     const session = this.byGuild.get(guildId);
     session?.handleVoiceStateUpdate(oldState, newState);

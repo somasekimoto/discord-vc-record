@@ -15,7 +15,7 @@ export interface SessionSnapshot {
   guildId: string;
   channelId: string;
   channelName?: string | null;
-  startedAt: number;
+  startedAt: number | null;
   endedAt: number | null;
   startedByUserId?: string;
   dir: string;
@@ -49,7 +49,7 @@ export interface Minutes {
   guildId: string;
   channelId: string;
   channelName?: string | null;
-  startedAt: number;
+  startedAt: number | null;
   endedAt: number | null;
   startedBy?: string | null;
   language: string;

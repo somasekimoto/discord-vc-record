@@ -22,7 +22,7 @@ import { errorMessage } from './types.ts';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PCM_FORMAT } from './recorder.js';
+import { PCM_FORMAT } from './recorder.ts';
 import { ffmpeg } from './ffmpeg.ts';
 import { buildMixedAudio } from './mix.ts';
 import { transcribe, getProviderName } from './stt/index.ts';
@@ -264,7 +264,7 @@ export async function process(summary: SessionSnapshot, tracks: Track[]) {
     lines.push('');
   }
   for (const u of utterances) {
-    const at = fmtOffset(u.startedAt - summary.startedAt);
+    const at = fmtOffset(u.startedAt - Number(summary.startedAt));
     lines.push(`**[${at}] ${u.displayName}**: ${u.text.replace(/\s*\n\s*/g, ' ')}`);
     lines.push('');
   }

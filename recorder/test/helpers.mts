@@ -7,7 +7,7 @@
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PCM_FORMAT } from '../src/recorder.js';
+import { PCM_FORMAT } from '../src/recorder.ts';
 
 export const BYTES_PER_SEC =
   PCM_FORMAT.sampleRate * PCM_FORMAT.channels * (PCM_FORMAT.bitsPerSample / 8);

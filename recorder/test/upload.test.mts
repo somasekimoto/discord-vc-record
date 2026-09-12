@@ -59,7 +59,7 @@ async function fixture(statuses: Record<string, number[]> = {}) {
 }
 
 for (const status of [408, 429, 500]) {
-  test(`upload: ${status} は再送し complete の応答喪失も再送する`, async (t) => {
+  test(`upload: ${status} は再送し complete の500応答も再送する`, async (t) => {
     const f = await fixture({ '/ingest': [status], '/ingest/audio/complete': [500] });
     t.after(() => f.close());
     const result = await uploadToWeb(f.minutes, f.files);
@@ -93,6 +93,18 @@ test('upload: 400 の音声は再送せず abort、次の mixed は続行し vie
   assert.equal(abort.length, 1);
   assert.deepEqual(JSON.parse(abort[0].body.toString()), { sessionId: 'legacy-session', userId: '111', uploadId: 'saved-upload' });
   assert.equal(f.requests.filter((r) => r.path.endsWith('/complete')).length, 1);
+});
+
+test('upload: plain object の文字列 status は408でも再送しない（旧 strict 比較を保持）', async (t) => {
+  const f = await fixture();
+  t.after(() => f.close());
+  const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+    throw { status: '408', message: 'plain mock timeout' };
+  });
+  const result = await uploadToWeb(f.minutes, f.files);
+  assert.equal(result.uploaded, false);
+  assert.equal(fetchMock.mock.callCount(), 1);
+  assert.match(String(result.reason), /plain mock timeout/);
 });
 
 test('upload: 未設定ならファイルを読まずスキップする', async (t) => {
