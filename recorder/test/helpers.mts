@@ -13,7 +13,7 @@ export const BYTES_PER_SEC =
   PCM_FORMAT.sampleRate * PCM_FORMAT.channels * (PCM_FORMAT.bitsPerSample / 8);
 
 /** 指定秒数のトーン PCM(s16le 48k stereo)を生成する。 */
-export function tonePcm(seconds, freq = 440) {
+export function tonePcm(seconds: number, freq = 440) {
   const samples = Math.round(PCM_FORMAT.sampleRate * seconds);
   const buf = Buffer.alloc(samples * PCM_FORMAT.channels * 2);
   for (let i = 0; i < samples; i++) {
@@ -31,7 +31,7 @@ export function tonePcm(seconds, freq = 440) {
  *   startedAt/endedAt は sessionStart(t0) からの相対 ms で指定する。
  * @returns {{summary, tracks, t0, cleanup}}
  */
-export async function makeSession(users, { durationMs = 60_000 } = {}) {
+export async function makeSession(users: { userId: string; displayName: string; pcmSeconds: number; freq?: number; utterances?: { startMs: number; endMs: number; byteStart: number; byteEnd: number }[] }[], { durationMs = 60_000 } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'pipeline-test-'));
   const t0 = Date.now() - 600_000;
 

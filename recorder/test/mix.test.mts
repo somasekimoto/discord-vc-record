@@ -4,21 +4,23 @@
  *  - writeMixedPcm: 実時間軸への配置と同時発話の合算(クリップ含む)を生PCMで検証
  *  - buildMixedAudio: m4a 生成まで通しで確認(ffmpeg 必須)
  */
+import type { Utterance } from '../src/types.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { computeMixPlan, writeMixedPcm, buildMixedAudio } from '../src/mix.js';
-import { BYTES_PER_SEC } from './helpers.mjs';
+import { computeMixPlan, writeMixedPcm, buildMixedAudio } from '../src/mix.ts';
+import { BYTES_PER_SEC } from './helpers.mts';
 
-const track = (bytes, utterances, pcmPath = '/x/track.pcm') => ({ pcmPath, bytes, utterances });
+const track = (bytes: number, utterances: Utterance[], pcmPath = '/x/track.pcm') => ({ pcmPath, bytes, utterances });
 
 test('computeMixPlan: 発話が実時刻オフセットに配置され、総量はセッション長になる', () => {
   const summary = { startedAt: 0, endedAt: 10_000 };
   const plan = computeMixPlan(summary, [
     track(BYTES_PER_SEC, [{ startedAt: 2000, endedAt: 3000, byteStart: 0, byteEnd: BYTES_PER_SEC }]),
   ]);
+  assert.ok(plan);
   assert.equal(plan.totalBytes, BYTES_PER_SEC * 10);
   assert.deepEqual(plan.tracks[0].segments, [
     { srcStart: 0, length: BYTES_PER_SEC, dstOffset: BYTES_PER_SEC * 2 },
@@ -30,6 +32,7 @@ test('computeMixPlan: セッション終了時刻を超える発話は総量を�
   const plan = computeMixPlan(summary, [
     track(BYTES_PER_SEC * 2, [{ startedAt: 500, endedAt: 2500, byteStart: 0, byteEnd: BYTES_PER_SEC * 2 }]),
   ]);
+  assert.ok(plan);
   assert.equal(plan.totalBytes, Math.round(BYTES_PER_SEC * 0.5) + BYTES_PER_SEC * 2);
 });
 
@@ -43,6 +46,7 @@ test('computeMixPlan: byteEnd はファイルサイズへクランプ、範囲�
       { startedAt: 3000, endedAt: 4000, byteStart: BYTES_PER_SEC * 2, byteEnd: BYTES_PER_SEC * 3 },
     ]),
   ]);
+  assert.ok(plan);
   assert.equal(plan.tracks[0].segments.length, 1);
   assert.equal(plan.tracks[0].segments[0].length, BYTES_PER_SEC);
 });
@@ -53,6 +57,7 @@ test('computeMixPlan: オフセットは常にサンプルフレーム(4バイ�
     // 1ms = 192バイト相当だが、7ms 等の中途半端な時刻でも 4 の倍数に丸まる
     track(BYTES_PER_SEC, [{ startedAt: 7, endedAt: 1007, byteStart: 2, byteEnd: BYTES_PER_SEC - 2 }]),
   ]);
+  assert.ok(plan);
   const seg = plan.tracks[0].segments[0];
   assert.equal(seg.dstOffset % 4, 0);
   assert.equal(seg.srcStart % 4, 0);
@@ -66,7 +71,7 @@ test('computeMixPlan: 配置できる発話が1つも無ければ null(utterance
 });
 
 /** 指定秒数の一定値 PCM(s16le 48k stereo)。合算検証を単純にするためトーンではなく定数 */
-function constPcm(seconds, value) {
+function constPcm(seconds: number, value: number) {
   const samples = Math.round(48000 * seconds);
   const buf = Buffer.alloc(samples * 4);
   for (let i = 0; i < samples; i++) {
@@ -76,7 +81,7 @@ function constPcm(seconds, value) {
   return buf;
 }
 
-const sampleAt = (buf, sec) => buf.readInt16LE(Math.round(BYTES_PER_SEC * sec / 4) * 4);
+const sampleAt = (buf: Buffer, sec: number) => buf.readInt16LE(Math.round(BYTES_PER_SEC * sec / 4) * 4);
 
 test('writeMixedPcm: 実時間軸に配置され、同時発話は合算・無音は0のまま', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'mix-test-'));
@@ -93,6 +98,7 @@ test('writeMixedPcm: 実時間軸に配置され、同時発話は合算・無�
       track(BYTES_PER_SEC, [{ startedAt: 1500, endedAt: 2500, byteStart: 0, byteEnd: BYTES_PER_SEC }], bPath),
     ]);
     const outPath = join(dir, 'mixed.pcm');
+    assert.ok(plan);
     await writeMixedPcm(plan, outPath);
 
     const mixed = await readFile(outPath);
@@ -122,6 +128,7 @@ test('writeMixedPcm: 合算は int16 でクリップされる', async () => {
       track(half, [{ startedAt: 0, endedAt: 500, byteStart: 0, byteEnd: half }], bPath),
     ]);
     const outPath = join(dir, 'mixed.pcm');
+    assert.ok(plan);
     await writeMixedPcm(plan, outPath);
 
     const mixed = await readFile(outPath);
@@ -144,6 +151,7 @@ test('buildMixedAudio: m4a が生成され durationSec がセッション長に�
     const outPath = join(dir, 'mixed.m4a');
     const result = await buildMixedAudio(summary, tracks, outPath);
 
+    assert.ok(result);
     assert.equal(result.path, outPath);
     assert.equal(result.durationSec, 4);
     const { size } = await stat(outPath);

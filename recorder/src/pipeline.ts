@@ -17,14 +17,16 @@
  * 出力はセッションディレクトリ直下:
  *   transcript.md / transcript.json / <userId>.wav / mixed.m4a
  */
+import type { SessionSnapshot, Track, Utterance, TranscriptUtterance, UploadResult } from './types.ts';
+import { errorMessage } from './types.ts';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PCM_FORMAT } from './recorder.js';
 import { ffmpeg } from './ffmpeg.ts';
-import { buildMixedAudio } from './mix.js';
+import { buildMixedAudio } from './mix.ts';
 import { transcribe, getProviderName } from './stt/index.ts';
-import { uploadToWeb } from './upload.js';
+import { uploadToWeb } from './upload.ts';
 import { deletePcmFiles } from './cleanup.ts';
 
 const BYTES_PER_SEC = PCM_FORMAT.sampleRate * PCM_FORMAT.channels * (PCM_FORMAT.bitsPerSample / 8);
@@ -39,7 +41,7 @@ const PAD_SEC = 0.25;
 const STT_CONCURRENCY = 4;
 
 /** 生 PCM(s16le 48k stereo) を wav に変換してパスを返す。 */
-async function pcmToWav(pcmPath, wavPath) {
+async function pcmToWav(pcmPath: string, wavPath: string) {
   await ffmpeg([
     '-f', 's16le',
     '-ar', String(PCM_FORMAT.sampleRate),
@@ -51,11 +53,11 @@ async function pcmToWav(pcmPath, wavPath) {
 }
 
 /** wav から [startSec, startSec+durSec) を切り出す。 */
-async function cutSegment(srcWav, outPath, startSec, durSec) {
+async function cutSegment(srcWav: string, outPath: string, startSec: number, durSec: number) {
   await ffmpeg(['-ss', startSec.toFixed(3), '-t', durSec.toFixed(3), '-i', srcWav, outPath]);
 }
 
-function fmtClock(ms) {
+function fmtClock(ms: number | null) {
   if (ms == null) return '';
   const d = new Date(ms);
   const hh = String(d.getHours()).padStart(2, '0');
@@ -64,7 +66,7 @@ function fmtClock(ms) {
 }
 
 /** セッション開始からの経過時間を m:ss / h:mm:ss で整形する。 */
-export function fmtOffset(ms) {
+export function fmtOffset(ms: number) {
   const total = Math.max(0, Math.round(ms / 1000));
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
@@ -76,8 +78,8 @@ export function fmtOffset(ms) {
  * 近接する発話区間を結合し、短すぎる区間を除く。
  * 入力は同一話者の時刻昇順(= PCM 内バイト位置も昇順)であることが前提。
  */
-export function mergeUtterances(utterances) {
-  const merged = [];
+export function mergeUtterances(utterances: Utterance[]) {
+  const merged: Utterance[] = [];
   for (const u of utterances) {
     const last = merged[merged.length - 1];
     if (last && u.startedAt - last.endedAt <= MERGE_GAP_MS) {
@@ -91,7 +93,7 @@ export function mergeUtterances(utterances) {
 }
 
 /** jobs(async 関数の配列)を並列度 limit で全て実行する。 */
-async function runWithConcurrency(jobs, limit) {
+async function runWithConcurrency(jobs: (() => Promise<void>)[], limit: number) {
   let next = 0;
   const workers = Array.from({ length: Math.min(limit, jobs.length) }, async () => {
     while (next < jobs.length) {
@@ -108,13 +110,13 @@ async function runWithConcurrency(jobs, limit) {
  * @param {Array<{userId,displayName,pcmPath,bytes,durationSec,utterances}>} tracks
  * @returns {Promise<{ markdown: string, minutes: object, files: {wavPaths: string[], mdPath: string, jsonPath: string} }>}
  */
-export async function process(summary, tracks) {
+export async function process(summary: SessionSnapshot, tracks: Track[]) {
   const dir = summary.dir;
   const engine = getProviderName();
   const wavPaths = [];
 
   // 1. 話者ごとに wav 化。1 話者の失敗はその話者だけスキップして他を救う。
-  const speakerTracks = [];
+  const speakerTracks: (Track & { wavPath: string | null; error?: unknown })[] = [];
   for (const t of tracks) {
     const wavPath = join(dir, `${t.userId}.wav`);
     try {
@@ -122,31 +124,32 @@ export async function process(summary, tracks) {
       wavPaths.push(wavPath);
       speakerTracks.push({ ...t, wavPath });
     } catch (err) {
-      console.error(`[pipeline] wav conversion failed user=${t.userId}: ${err.message}`);
-      speakerTracks.push({ ...t, wavPath: null, error: err.message });
+      console.error(`[pipeline] wav conversion failed user=${t.userId}: ${errorMessage(err)}`);
+      speakerTracks.push({ ...t, wavPath: null, error: errorMessage(err) });
     }
   }
 
   // 2. 発話区間ごとに切り出して STT。全話者分のジョブをまとめて並列実行する。
   /** @type {Array<{userId,displayName,startedAt,endedAt,text}>} */
-  const utterances = [];
+  const utterances: TranscriptUtterance[] = [];
   // 発話区間が記録されていないトラック(旧録音・異常系)の旧方式(トラック全体一括)結果
-  const noTimelineSpeakers = [];
+  const noTimelineSpeakers: Pick<TranscriptUtterance, 'userId' | 'displayName' | 'text'>[] = [];
   const segDir = await mkdtemp(join(tmpdir(), 'stt-seg-'));
   try {
     const jobs = [];
     for (const t of speakerTracks) {
       if (!t.wavPath) continue;
+      const wavPath = t.wavPath;
       const merged = mergeUtterances(t.utterances ?? []);
 
       if (merged.length === 0) {
         jobs.push(async () => {
           let text;
           try {
-            text = (await transcribe(t.wavPath, { language: 'ja' })).text.trim();
+            text = (await transcribe(wavPath, { language: 'ja' })).text.trim();
           } catch (err) {
-            console.error(`[pipeline] speaker failed user=${t.userId}: ${err.message}`);
-            text = `（文字起こし失敗: ${err.message}）`;
+            console.error(`[pipeline] speaker failed user=${t.userId}: ${errorMessage(err)}`);
+            text = `（文字起こし失敗: ${errorMessage(err)}）`;
           }
           noTimelineSpeakers.push({ userId: t.userId, displayName: t.displayName, text });
         });
@@ -167,11 +170,11 @@ export async function process(summary, tracks) {
           const segPath = join(segDir, `${t.userId}-${String(i).padStart(4, '0')}.wav`);
           let text;
           try {
-            await cutSegment(t.wavPath, segPath, startSec, endSec - startSec);
+            await cutSegment(wavPath, segPath, startSec, endSec - startSec);
             text = (await transcribe(segPath, { language: 'ja' })).text.trim();
           } catch (err) {
-            console.error(`[pipeline] segment failed user=${t.userId} #${i}: ${err.message}`);
-            text = `（文字起こし失敗: ${err.message}）`;
+            console.error(`[pipeline] segment failed user=${t.userId} #${i}: ${errorMessage(err)}`);
+            text = `（文字起こし失敗: ${errorMessage(err)}）`;
           } finally {
             await rm(segPath, { force: true }).catch(() => {});
           }
@@ -197,7 +200,7 @@ export async function process(summary, tracks) {
   try {
     mixed = await buildMixedAudio(summary, tracks, join(dir, 'mixed.m4a'));
   } catch (err) {
-    console.error(`[pipeline] mixed audio failed: ${err.message}`);
+    console.error(`[pipeline] mixed audio failed: ${errorMessage(err)}`);
   }
 
   // 4. 構造化 JSON。utterances が時系列の本体。
@@ -287,18 +290,18 @@ export async function process(summary, tracks) {
 
   // 5. web(R2/D1)へアップロード。未設定ならスキップ(ローカル保存のみ)。
   const files = { wavPaths, mdPath, jsonPath, mixedPath: mixed?.path ?? null };
-  let upload = { uploaded: false };
+  let upload: UploadResult = { uploaded: false };
   try {
     upload = await uploadToWeb(minutes, files);
   } catch (err) {
-    upload = { uploaded: false, reason: err.message };
+    upload = { uploaded: false, reason: errorMessage(err) };
   }
 
   // 6. アップロードできたら中間物の PCM を消す(ディスク満杯=録音不能を防ぐ)。
   // 失敗しても文字起こし結果は返す。掃除の失敗で本体を巻き込まない。
   if (upload.uploaded) {
     await deletePcmFiles(dir).catch((err) => {
-      console.error(`[pipeline] pcm cleanup failed: ${err.message}`);
+      console.error(`[pipeline] pcm cleanup failed: ${errorMessage(err)}`);
     });
   }
 

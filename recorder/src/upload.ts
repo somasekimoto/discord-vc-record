@@ -10,6 +10,9 @@
  *   2. 音声(話者別 wav + 全体ミックス m4a)をファイルごとに R2 マルチパート
  *      (init → 40MiB チャンク × part → complete)。ミックスは userId="mixed" で送る
  */
+import type { FileHandle } from 'node:fs/promises';
+import type { Minutes, UploadFiles, UploadResult } from './types.ts';
+import { errorMessage } from './types.ts';
 import { openAsBlob } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
 import { basename } from 'node:path';
@@ -18,33 +21,33 @@ import { basename } from 'node:path';
 const PART_SIZE = 40 * 1024 * 1024;
 const MAX_ATTEMPTS = 3;
 
-async function withRetry(label, fn) {
+async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
   let lastErr;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       return await fn();
     } catch (err) {
       lastErr = err;
-      console.error(`[upload] ${label} failed (attempt ${attempt}/${MAX_ATTEMPTS}): ${err.message}`);
+      console.error(`[upload] ${label} failed (attempt ${attempt}/${MAX_ATTEMPTS}): ${errorMessage(err)}`);
       // 4xx は再送しても結果が変わらない(408/429 は一時的なので除く)
-      if (err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429) break;
+      const status = err != null && typeof err === 'object' && 'status' in err ? err.status : undefined;
+      if (Number(status) >= 400 && Number(status) < 500 && status !== 408 && status !== 429) break;
       if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, 2000 * attempt));
     }
   }
   throw lastErr;
 }
 
-async function expectOk(res, label) {
+async function expectOk(res: Response, label: string) {
   if (!res.ok) {
-    const err = new Error(`${label} ${res.status}: ${(await res.text()).slice(0, 300)}`);
-    err.status = res.status;
+    const err = Object.assign(new Error(`${label} ${res.status}: ${(await res.text()).slice(0, 300)}`), { status: res.status });
     throw err;
   }
   return res;
 }
 
 /** offset から length バイトを必ず読み切る。fh.read は1回で埋まる保証がない。 */
-async function readExact(fh, length, offset) {
+async function readExact(fh: FileHandle, length: number, offset: number) {
   const buf = Buffer.alloc(length);
   let done = 0;
   while (done < length) {
@@ -56,7 +59,7 @@ async function readExact(fh, length, offset) {
 }
 
 /** meta + 文字起こし(md/json)だけを /ingest に送る。音声は別途。 */
-async function postMeta(base, secret, minutes, files) {
+async function postMeta(base: string, secret: string, minutes: Minutes, files: UploadFiles) {
   const form = new FormData();
   form.set('meta', JSON.stringify({ ...minutes, startedBy: minutes.startedBy ?? null }));
   form.set('transcript_md', await openAsBlob(files.mdPath, { type: 'text/markdown' }), 'transcript.md');
@@ -75,11 +78,11 @@ async function postMeta(base, secret, minutes, files) {
  * 音声 1 本を R2 マルチパートで分割アップロードする。
  * userId は話者の snowflake、または全体ミックスを表す "mixed"(キーは web 側が決める)。
  */
-async function uploadAudio(base, secret, sessionId, { path, userId, durationSec }) {
+async function uploadAudio(base: string, secret: string, sessionId: string, { path, userId, durationSec }: { path: string; userId: string; durationSec?: number | null }) {
   const filename = basename(path);
   const { size } = await stat(path);
   const auth = { Authorization: `Bearer ${secret}` };
-  const q = (extra) => new URLSearchParams({ sessionId, userId, ...extra }).toString();
+  const q = (extra: Record<string, string>) => new URLSearchParams({ sessionId, userId, ...extra }).toString();
 
   const { uploadId } = await withRetry(`audio init ${filename}`, async () => {
     const res = await fetch(`${base}/ingest/audio/init`, {
@@ -87,24 +90,27 @@ async function uploadAudio(base, secret, sessionId, { path, userId, durationSec 
       headers: { ...auth, 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId, userId }),
     });
-    return (await expectOk(res, 'audio init')).json();
+    // 既存 ingest 応答の信頼境界。新たな入力拒否は加えない。
+    const payload: unknown = await (await expectOk(res, 'audio init')).json();
+    return payload as { uploadId: string };
   });
 
   const fh = await open(path, 'r');
   try {
     const totalParts = Math.max(1, Math.ceil(size / PART_SIZE));
-    const parts = [];
+    const parts: { partNumber: number; etag: string }[] = [];
     for (let i = 0; i < totalParts; i++) {
       const partNumber = i + 1;
       const length = Math.min(PART_SIZE, size - i * PART_SIZE);
       const buf = await readExact(fh, length, i * PART_SIZE);
       const part = await withRetry(`audio part ${filename} ${partNumber}/${totalParts}`, async () => {
-        const res = await fetch(`${base}/ingest/audio/part?${q({ uploadId, partNumber })}`, {
+        const res = await fetch(`${base}/ingest/audio/part?${q({ uploadId, partNumber: String(partNumber) })}`, {
           method: 'PUT',
           headers: { ...auth, 'Content-Type': 'application/octet-stream' },
           body: buf,
         });
-        return (await expectOk(res, 'audio part')).json();
+        const payload: unknown = await (await expectOk(res, 'audio part')).json();
+        return payload as { partNumber: number; etag: string };
       });
       parts.push({ partNumber: part.partNumber, etag: part.etag });
       console.log(`[upload] ${filename} part ${partNumber}/${totalParts} ok`);
@@ -136,7 +142,7 @@ async function uploadAudio(base, secret, sessionId, { path, userId, durationSec 
  * @param {{mdPath:string, jsonPath:string, wavPaths:string[], mixedPath?:string|null}} files
  * @returns {Promise<{uploaded:boolean, sessionId:string, viewUrl?:string, reason?:string}>}
  */
-export async function uploadToWeb(minutes, files) {
+export async function uploadToWeb(minutes: Minutes, files: UploadFiles): Promise<UploadResult> {
   const base = process.env.WEB_BASE_URL;
   const secret = process.env.INGEST_SECRET;
   const sessionId = minutes.sessionId;
@@ -148,7 +154,7 @@ export async function uploadToWeb(minutes, files) {
   try {
     await postMeta(base, secret, minutes, files);
   } catch (err) {
-    return { uploaded: false, sessionId, reason: `ingest meta 失敗: ${err.message}` };
+    return { uploaded: false, sessionId, reason: `ingest meta 失敗: ${errorMessage(err)}` };
   }
   const viewUrl = `${base}/s/${sessionId}`;
 
@@ -161,7 +167,7 @@ export async function uploadToWeb(minutes, files) {
     try {
       await uploadAudio(base, secret, sessionId, { path: wavPath, userId, durationSec });
     } catch (err) {
-      errors.push(`${userId}: ${err.message}`);
+      errors.push(`${userId}: ${errorMessage(err)}`);
     }
   }
   if (files.mixedPath) {
@@ -172,7 +178,7 @@ export async function uploadToWeb(minutes, files) {
     try {
       await uploadAudio(base, secret, sessionId, { path: files.mixedPath, userId: 'mixed', durationSec });
     } catch (err) {
-      errors.push(`mixed: ${err.message}`);
+      errors.push(`mixed: ${errorMessage(err)}`);
     }
   }
 

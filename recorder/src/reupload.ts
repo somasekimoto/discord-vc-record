@@ -6,16 +6,17 @@
  * 読んで uploadToWeb を呼ぶ。
  *
  * 使い方:
- *   node src/reupload.js <sessionId>
+ *   node src/reupload.ts <sessionId>
  *   (RECORDINGS_DIR 配下の <sessionId>/ を対象。既定 ./recordings)
  */
+import type { Minutes } from './types.ts';
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { uploadToWeb } from './upload.js';
+import { uploadToWeb } from './upload.ts';
 
 const sessionId = process.argv[2];
 if (!sessionId) {
-  console.error('usage: node src/reupload.js <sessionId>');
+  console.error('usage: node src/reupload.ts <sessionId>');
   process.exit(1);
 }
 
@@ -23,7 +24,9 @@ const dir = join(process.env.RECORDINGS_DIR || './recordings', sessionId);
 const jsonPath = join(dir, 'transcript.json');
 const mdPath = join(dir, 'transcript.md');
 
-const minutes = JSON.parse(await readFile(jsonPath, 'utf8'));
+// 旧保存 JSON の信頼境界。移行で形式や受理条件を変更しない。
+const saved: unknown = JSON.parse(await readFile(jsonPath, 'utf8'));
+const minutes = saved as Minutes;
 
 const wavPaths = [];
 for (const s of minutes.speakers || []) {
@@ -36,7 +39,7 @@ for (const s of minutes.speakers || []) {
   }
 }
 
-let mixedPath = join(dir, 'mixed.m4a');
+let mixedPath: string | null = join(dir, 'mixed.m4a');
 try {
   await stat(mixedPath);
 } catch {

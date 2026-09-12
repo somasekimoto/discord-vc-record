@@ -9,12 +9,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { stat } from 'node:fs/promises';
-import { makeSession, BYTES_PER_SEC } from './helpers.mjs';
+import { makeSession, BYTES_PER_SEC } from './helpers.mts';
 
 process.env.STT_PROVIDER = 'local';
 delete process.env.WEB_BASE_URL; // upload はスキップさせる
 
-const { process: runPipeline } = await import('../src/pipeline.js');
+const { process: runPipeline } = await import('../src/pipeline.ts');
 
 test('STT が失敗しても時系列の議事録が生成される', async () => {
   const { summary, tracks, t0, cleanup } = await makeSession([
@@ -69,6 +69,7 @@ test('STT が失敗しても時系列の議事録が生成される', async () =
     }
 
     // 会話全体のミックス音声も生成される
+    assert.ok(files.mixedPath);
     assert.ok(files.mixedPath?.endsWith('mixed.m4a'));
     assert.ok((await stat(files.mixedPath)).size > 0, 'mixed.m4a が空');
 
