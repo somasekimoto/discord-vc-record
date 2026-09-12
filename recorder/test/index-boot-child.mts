@@ -20,7 +20,15 @@ class FakeClient extends EventEmitter {
   }
   async destroy() { console.log('fake-client-destroyed'); }
 }
-mock.module('discord.js', { namedExports: { ...discord, Client: FakeClient } });
+// CJS の default/module.exports を含む namespace 全体は展開しない。
+// SDK の非 configurable な getter を Node の mock が再定義するのを避ける。
+mock.module('discord.js', {
+  namedExports: {
+    Client: FakeClient,
+    GatewayIntentBits: discord.GatewayIntentBits,
+    MessageFlags: discord.MessageFlags,
+  },
+});
 mock.module('dotenv/config', { namedExports: {} });
 globalThis.fetch = async () => { throw new Error('network forbidden in boot test'); };
 await import('../src/index.ts');
