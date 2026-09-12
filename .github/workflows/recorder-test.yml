@@ -37,3 +37,28 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
       - run: pnpm test
+
+  # 本番と同じ --prod install + native stripping。Discord には接続しない。
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build -t discord-vc-recorder:ts-check recorder
+      - name: Probe production modules and native Opus
+        run: |
+          docker run --rm discord-vc-recorder:ts-check node --input-type=module -e '
+            await import("./src/recorder.ts");
+            await import("./src/pipeline.ts");
+            const { default: prism } = await import("prism-media");
+            const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
+            let bytes = 0;
+            decoder.on("data", (chunk) => { bytes += chunk.length; });
+            await new Promise((resolve, reject) => {
+              decoder.on("end", resolve);
+              decoder.on("error", reject);
+              decoder.end(Buffer.from([0xf8, 0xff, 0xfe]));
+            });
+            if (bytes === 0) throw new Error("native decoder produced no PCM");
+            console.log("module-load-ok", bytes);
+          '

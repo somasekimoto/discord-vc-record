@@ -4,6 +4,8 @@
  * 再入室キャンセル、二重停止防止、外部停止時の後片付けを検証する。
  * タイマーは注入したフェイクで手動発火させる。
  */
+import type { PromptPayload, MessageEdit, VoiceEntry, TimerHandle } from '../src/ports.ts';
+import type { InteractionReplyOptions } from 'discord.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -12,7 +14,7 @@ import {
   parseEmptyDelayMs,
   DEFAULT_EMPTY_DELAY_MS,
   EXTEND_MINUTES,
-} from '../src/auto-stop.js';
+} from '../src/auto-stop.ts';
 
 const GUILD = 'guild-1';
 const VC = 'vc-1';
@@ -22,18 +24,18 @@ const SESSION_ID = 'sess-1';
 /** 手動発火できるフェイクタイマー。 */
 function makeTimers() {
   let nextId = 1;
-  const pending = new Map(); // id -> { fn, ms }
+  const pending = new Map<TimerHandle | null, { fn: () => Promise<void>; ms: number }>(); // id -> { fn, ms }
   return {
-    setTimeout: (fn, ms) => {
+    setTimeout: (fn: () => Promise<void>, ms: number) => {
       const id = nextId++;
       pending.set(id, { fn, ms });
       return id;
     },
-    clearTimeout: (id) => {
+    clearTimeout: (id: TimerHandle | null) => {
       pending.delete(id);
     },
     /** 登録済みタイマーを1つ発火させる(完了まで待つ)。 */
-    async fire(id) {
+    async fire(id: TimerHandle | null) {
       const t = pending.get(id);
       assert.ok(t, `timer ${id} is not pending`);
       pending.delete(id);
@@ -47,7 +49,7 @@ function makeTimers() {
  * コントローラと discord.js 相当の最小フェイク一式を組む。
  * vcMembers: VC の初期在室者 [{ id, bot, resolved }]
  */
-function makeHarness({ emptyDelayMs = 60_000, vcMembers = [] } = {}) {
+function makeHarness({ emptyDelayMs = 60_000, vcMembers = [] }: { emptyDelayMs?: number; vcMembers?: { id?: string; bot?: boolean; resolved?: boolean }[] } = {}) {
   // voiceStates.cache 相当。leave/join ヘルパで書き換える
   const voiceEntries = vcMembers.map((m, i) => ({
     channelId: VC,
@@ -58,7 +60,7 @@ function makeHarness({ emptyDelayMs = 60_000, vcMembers = [] } = {}) {
     id: GUILD,
     voiceStates: {
       cache: {
-        filter: (fn) => {
+        filter: (fn: (entry: VoiceEntry) => boolean) => {
           const arr = voiceEntries.filter(fn);
           return { size: arr.length };
         },
@@ -66,10 +68,10 @@ function makeHarness({ emptyDelayMs = 60_000, vcMembers = [] } = {}) {
     },
   };
 
-  const sent = []; // channel.send されたプロンプトメッセージ
+  const sent: { payload: PromptPayload; edits: MessageEdit[]; edit(p: MessageEdit): Promise<number> }[] = []; // channel.send されたプロンプトメッセージ
   const channel = {
-    send: async (payload) => {
-      const message = { payload, edits: [], edit: async (p) => message.edits.push(p) };
+    send: async (payload: PromptPayload) => {
+      const message = { payload, edits: [] as MessageEdit[], edit: async (p: MessageEdit) => message.edits.push(p) };
       sent.push(message);
       return message;
     },
@@ -77,7 +79,7 @@ function makeHarness({ emptyDelayMs = 60_000, vcMembers = [] } = {}) {
 
   const session = { id: SESSION_ID, channelId: VC, notifyChannelId: TEXT };
   const sessionsMap = new Map([[GUILD, session]]);
-  const stops = [];
+  const stops: { guildId: string; reason: string }[] = [];
   const timers = makeTimers();
 
   const controller = new AutoStopController({
@@ -92,7 +94,7 @@ function makeHarness({ emptyDelayMs = 60_000, vcMembers = [] } = {}) {
     },
   });
 
-  const makeState = (channelId, { bot = false, resolved = true } = {}) => ({
+  const makeState = (channelId: string | null, { bot = false, resolved = true } = {}) => ({
     channelId,
     guild,
     member: resolved ? { user: { bot } } : null,
@@ -107,7 +109,7 @@ function makeHarness({ emptyDelayMs = 60_000, vcMembers = [] } = {}) {
     sessionsMap,
     voiceEntries,
     /** userId が VC から退出したことにしてイベントを流す。 */
-    async leave(userId, opts = {}) {
+    async leave(userId: string, opts: { bot?: boolean; resolved?: boolean } = {}) {
       const idx = voiceEntries.findIndex((e) => e.id === userId);
       if (idx >= 0) voiceEntries.splice(idx, 1);
       await controller.handleVoiceState(
@@ -116,7 +118,7 @@ function makeHarness({ emptyDelayMs = 60_000, vcMembers = [] } = {}) {
       );
     },
     /** userId が VC に入室したことにしてイベントを流す。 */
-    async join(userId, opts = {}) {
+    async join(userId: string, opts: { bot?: boolean; resolved?: boolean } = {}) {
       voiceEntries.push({
         channelId: VC,
         id: userId,
@@ -129,7 +131,7 @@ function makeHarness({ emptyDelayMs = 60_000, vcMembers = [] } = {}) {
     },
     /** 進行中の確認状態のタイマーを発火させる。 */
     async fireTimer() {
-      const state = controller.states.get(GUILD);
+      const state = controller.states.get(GUILD)!;
       assert.ok(state, 'no pending auto-stop state');
       await timers.fire(state.timer);
     },
@@ -137,15 +139,15 @@ function makeHarness({ emptyDelayMs = 60_000, vcMembers = [] } = {}) {
 }
 
 /** ボタン押下 interaction のフェイク。 */
-function makeButtonInteraction(customId, { guildId = GUILD } = {}) {
-  const calls = { updates: [], replies: [], messageEdits: [] };
+function makeButtonInteraction(customId: string, { guildId = GUILD } = {}) {
+  const calls: { updates: MessageEdit[]; replies: InteractionReplyOptions[]; messageEdits: MessageEdit[] } = { updates: [], replies: [], messageEdits: [] };
   return {
     customId,
     guildId,
     calls,
-    update: async (p) => calls.updates.push(p),
-    reply: async (p) => calls.replies.push(p),
-    message: { edit: async (p) => calls.messageEdits.push(p) },
+    update: async (p: MessageEdit) => calls.updates.push(p),
+    reply: async (p: InteractionReplyOptions) => calls.replies.push(p),
+    message: { edit: async (p: MessageEdit) => calls.messageEdits.push(p) },
   };
 }
 
@@ -154,8 +156,8 @@ test('最後の1人が退出するとボタン付きプロンプトが投稿さ�
   await h.leave('u1');
 
   assert.equal(h.sent.length, 1);
-  assert.match(h.sent[0].payload.content, /無人になりました/);
-  assert.match(h.sent[0].payload.content, /60秒/);
+  assert.match(h.sent[0].payload.content!, /無人になりました/);
+  assert.match(h.sent[0].payload.content!, /60秒/);
   const buttons = h.sent[0].payload.components[0].components;
   assert.equal(buttons.length, 1 + EXTEND_MINUTES.length); // すぐ終了 + 延長プリセット
   assert.equal(buttons[0].custom_id, `autostop:stop:${SESSION_ID}`);
@@ -163,7 +165,7 @@ test('最後の1人が退出するとボタン付きプロンプトが投稿さ�
   assert.equal(h.stops.length, 0); // 猶予中はまだ停止しない
   await h.fireTimer();
   assert.deepEqual(h.stops, [{ guildId: GUILD, reason: 'auto' }]);
-  assert.match(h.sent[0].edits[0].content, /自動終了しました/);
+  assert.match(h.sent[0].edits[0].content!, /自動終了しました/);
   assert.deepEqual(h.sent[0].edits[0].components, []); // ボタン無効化
 });
 
@@ -202,12 +204,12 @@ test('録音していないギルドのイベントは無視する', async () =>
 test('カウントダウン中に再入室するとキャンセルされ停止しない', async () => {
   const h = makeHarness({ vcMembers: [{ id: 'u1' }] });
   await h.leave('u1');
-  const state = h.controller.states.get(GUILD);
+  const state = h.controller.states.get(GUILD)!;
   await h.join('u1');
 
   assert.equal(h.controller.states.size, 0);
   assert.equal(h.timers.pending.has(state.timer), false); // タイマー解除
-  assert.match(h.sent[0].edits[0].content, /戻ったため/);
+  assert.match(h.sent[0].edits[0].content!, /戻ったため/);
   assert.equal(h.stops.length, 0);
 });
 
@@ -221,30 +223,30 @@ test('退出イベントが連続しても確認中はプロンプトを重複�
 test('「すぐ終了」ボタンで即停止しタイマーが解除される', async () => {
   const h = makeHarness({ vcMembers: [{ id: 'u1' }] });
   await h.leave('u1');
-  const state = h.controller.states.get(GUILD);
+  const state = h.controller.states.get(GUILD)!;
 
   const interaction = makeButtonInteraction(`autostop:stop:${SESSION_ID}`);
   await h.controller.handleButton(interaction);
 
   assert.deepEqual(h.stops, [{ guildId: GUILD, reason: 'button' }]);
   assert.equal(h.timers.pending.has(state.timer), false);
-  assert.match(interaction.calls.updates[0].content, /終了します/);
+  assert.match(interaction.calls.updates[0].content!, /終了します/);
   assert.deepEqual(interaction.calls.updates[0].components, []);
 });
 
 test('延長ボタンで猶予タイマーが分数タイマーに付け替わる', async () => {
   const h = makeHarness({ vcMembers: [{ id: 'u1' }] });
   await h.leave('u1');
-  const countdownTimer = h.controller.states.get(GUILD).timer;
+  const countdownTimer = h.controller.states.get(GUILD)!.timer;
 
   const interaction = makeButtonInteraction(`autostop:extend:${SESSION_ID}:15`);
   await h.controller.handleButton(interaction);
 
-  const state = h.controller.states.get(GUILD);
+  const state = h.controller.states.get(GUILD)!;
   assert.equal(state.phase, 'extended');
   assert.equal(h.timers.pending.has(countdownTimer), false); // 元の60秒は解除
-  assert.equal(h.timers.pending.get(state.timer).ms, 15 * 60_000);
-  assert.match(interaction.calls.updates[0].content, /15分延長/);
+  assert.equal(h.timers.pending.get(state.timer)!.ms, 15 * 60_000);
+  assert.match(interaction.calls.updates[0].content!, /15分延長/);
   assert.equal(h.stops.length, 0);
 });
 
@@ -264,16 +266,17 @@ test('延長満了後もまだ無人なら新しいプロンプトを再送し�
 test('満了コールバックが既にキュー済みでも延長ボタンが優先される(延長レース)', async () => {
   const h = makeHarness({ vcMembers: [{ id: 'u1' }] });
   await h.leave('u1');
-  const state = h.controller.states.get(GUILD);
+  const state = h.controller.states.get(GUILD)!;
   // 満了コールバックが実行キューに積まれた直後(clearTimeout が効かない)を再現するため、
   // 延長前にコールバックを取り出しておき、延長後に実行する
   const queued = h.timers.pending.get(state.timer);
 
   await h.controller.handleButton(makeButtonInteraction(`autostop:extend:${SESSION_ID}:5`));
+  assert.ok(queued);
   await queued.fn();
 
   assert.equal(h.stops.length, 0); // 延長したのに停止しない
-  const after = h.controller.states.get(GUILD);
+  const after = h.controller.states.get(GUILD)!;
   assert.equal(after.phase, 'extended');
   assert.ok(h.timers.pending.has(after.timer)); // 延長タイマーは孤児にならず生きている
 });
@@ -288,7 +291,7 @@ test('猶予満了時に guild が取得できなければ停止せず再確認�
   // 誤停止はしないが、監視は途切れさせない(本当に無人なら最終的に止めるため)
   assert.equal(h.stops.length, 0);
   assert.equal(h.controller.states.size, 1);
-  assert.ok(h.timers.pending.has(h.controller.states.get(GUILD).timer));
+  assert.ok(h.timers.pending.has(h.controller.states.get(GUILD)!.timer));
 
   // guild が復帰したら次の再確認で停止する
   h.controller.getGuild = realGetGuild;
@@ -306,7 +309,7 @@ test('延長満了時に guild が取得できなければ延長状態のまま�
 
   assert.equal(h.sent.length, 1); // プロンプト再送はまだ
   assert.equal(h.stops.length, 0);
-  assert.equal(h.controller.states.get(GUILD).phase, 'extended');
+  assert.equal(h.controller.states.get(GUILD)!.phase, 'extended');
 
   // guild が復帰したら次の再確認でプロンプト再送(通常の延長満了と同じ流れに戻る)
   h.controller.getGuild = realGetGuild;
@@ -334,7 +337,7 @@ test('猶予満了時に無人でなくなっていたら停止しない(入室�
 
   assert.equal(h.stops.length, 0);
   assert.equal(h.controller.states.size, 0);
-  assert.match(h.sent[0].edits[0].content, /戻ったため/);
+  assert.match(h.sent[0].edits[0].content!, /戻ったため/);
 });
 
 test('別セッションの古いボタンは ephemeral 応答だけ返し停止しない', async () => {
@@ -346,7 +349,7 @@ test('別セッションの古いボタンは ephemeral 応答だけ返し停止
 
   assert.equal(h.stops.length, 0);
   assert.equal(interaction.calls.replies.length, 1);
-  assert.match(interaction.calls.replies[0].content, /すでに終了/);
+  assert.match(interaction.calls.replies[0].content!, /すでに終了/);
   assert.deepEqual(interaction.calls.messageEdits[0], { components: [] }); // 古いボタンは剥がす
   assert.equal(h.controller.states.size, 1); // 進行中の確認は生きたまま
 });
@@ -358,8 +361,8 @@ test('プリセットにない延長分数は拒否する', async () => {
   const interaction = makeButtonInteraction(`autostop:extend:${SESSION_ID}:999`);
   await h.controller.handleButton(interaction);
 
-  assert.match(interaction.calls.replies[0].content, /不正/);
-  assert.equal(h.controller.states.get(GUILD).phase, 'countdown'); // タイマーは元のまま
+  assert.match(interaction.calls.replies[0].content!, /不正/);
+  assert.equal(h.controller.states.get(GUILD)!.phase, 'countdown'); // タイマーは元のまま
 });
 
 test('プロンプト投稿に失敗しても自動停止は生きる', async () => {
@@ -376,14 +379,14 @@ test('プロンプト投稿に失敗しても自動停止は生きる', async ()
 test('外部から録音が停止されたら確認状態を片付ける(notifySessionEnded)', async () => {
   const h = makeHarness({ vcMembers: [{ id: 'u1' }] });
   await h.leave('u1');
-  const state = h.controller.states.get(GUILD);
+  const state = h.controller.states.get(GUILD)!;
 
   h.sessionsMap.delete(GUILD); // /rec stop 相当
   await h.controller.notifySessionEnded(GUILD);
 
   assert.equal(h.controller.states.size, 0);
   assert.equal(h.timers.pending.has(state.timer), false);
-  assert.match(h.sent[0].edits[0].content, /終了しました/);
+  assert.match(h.sent[0].edits[0].content!, /終了しました/);
 
   // 片付け後にタイマーが発火しても(clearTimeout されない実装だったとしても)停止しない
   assert.equal(h.stops.length, 0);
@@ -392,7 +395,7 @@ test('外部から録音が停止されたら確認状態を片付ける(notifyS
 test('セッション消滅後にタイマーが発火しても何もしない', async () => {
   const h = makeHarness({ vcMembers: [{ id: 'u1' }] });
   await h.leave('u1');
-  const state = h.controller.states.get(GUILD);
+  const state = h.controller.states.get(GUILD)!;
   h.sessionsMap.delete(GUILD); // notifySessionEnded を経ずに消えた想定
 
   await h.timers.fire(state.timer);

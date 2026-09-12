@@ -13,6 +13,7 @@
  *
  * 注意: これは検証用の使い捨てスクリプト。本実装は recorder.js 側で行う。
  */
+import { errorMessage } from './types.ts';
 import 'dotenv/config';
 import { createWriteStream } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
@@ -38,7 +39,7 @@ const OUT_DIR = new URL('../recordings/', import.meta.url);
 
 // 48kHz / stereo / s16le の生 PCM に最小 WAV ヘッダを付ける。
 // (検証目的なので ffmpeg を挟まず、PCM をそのまま WAV 化して再生可能にする)
-function wavHeader(dataLength, { sampleRate = 48000, channels = 2, bitsPerSample = 16 } = {}) {
+function wavHeader(dataLength: number, { sampleRate = 48000, channels = 2, bitsPerSample = 16 } = {}) {
   const blockAlign = (channels * bitsPerSample) / 8;
   const byteRate = sampleRate * blockAlign;
   const buf = Buffer.alloc(44);
@@ -65,13 +66,13 @@ const client = new Client({
 const recording = new Set(); // 同一ユーザーの二重購読を防ぐ
 
 client.once('clientReady', async () => {
-  console.log(`[spike] logged in as ${client.user.tag}`);
+  console.log(`[spike] logged in as ${client.user!.tag}`);
   await mkdir(OUT_DIR, { recursive: true });
 
   const connection = joinVoiceChannel({
-    channelId: VOICE_CHANNEL_ID,
-    guildId: GUILD_ID,
-    adapterCreator: client.guilds.cache.get(GUILD_ID).voiceAdapterCreator,
+    channelId: VOICE_CHANNEL_ID!,
+    guildId: GUILD_ID!,
+    adapterCreator: client.guilds.cache.get(GUILD_ID!)!.voiceAdapterCreator,
     selfDeaf: false, // 受信するので deaf にしない
     selfMute: true,
   });
@@ -103,7 +104,7 @@ client.once('clientReady', async () => {
     try {
       await pipeline(opusStream, decoder, out);
     } catch (err) {
-      console.error(`[spike] stream error for ${userId}:`, err.message);
+      console.error(`[spike] stream error for ${userId}:`, errorMessage(err));
     } finally {
       recording.delete(userId);
       console.log(`[spike] segment ended for ${userId} -> ${pcmPath.pathname}`);
@@ -114,7 +115,7 @@ client.once('clientReady', async () => {
 // Ctrl+C で PCM を WAV に変換して終了
 async function shutdown() {
   console.log('\n[spike] stopping...');
-  const conn = getVoiceConnection(GUILD_ID);
+  const conn = getVoiceConnection(GUILD_ID!);
   if (conn) conn.destroy();
 
   // 生 PCM ファイルを WAV 化（ヘッダだけ付け直す）

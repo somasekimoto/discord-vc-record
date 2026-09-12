@@ -11,6 +11,8 @@
  *  - VC に既に他の人がいる(最初の入室者にだけ通知)
  *  - 同一チャンネルでクールダウン時間内に通知済み
  */
+import type { ButtonRows, VoiceStatePort, StartButtonPort, StartOptions } from './ports.ts';
+import { errorMessage } from './types.ts';
 import { MessageFlags } from 'discord.js';
 
 export const DEFAULT_COOLDOWN_MS = 5 * 60 * 1000;
@@ -23,7 +25,7 @@ export const START_BUTTON_PREFIX = 'recstart';
  * customId に対象 VC の channelId を埋め、押下時に「どの VC を録音するか」を
  * ボタン側で一意に決める(押した人が別の VC にいる場合を弾くため)。
  */
-export function buildStartComponents(channelId) {
+export function buildStartComponents(channelId: string): ButtonRows {
   return [
     {
       type: 1, // ActionRow
@@ -39,15 +41,26 @@ export function buildStartComponents(channelId) {
   ];
 }
 
+interface JoinPromptOptions {
+  channelIds: Set<string> | string[];
+  sessions: { get(guildId: string): unknown };
+  cooldownMs?: number;
+  now?: () => number;
+}
 export class JoinPromptNotifier {
+  declare channelIds: Set<string>;
+  declare sessions: JoinPromptOptions['sessions'];
+  declare cooldownMs: number;
+  declare now: () => number;
+  declare lastPromptedAt: Map<string, number>;
   /**
    * @param {object} opts
    * @param {Set<string>|string[]} opts.channelIds 通知対象の VC ID
-   * @param {import('./recorder.js').SessionManager} opts.sessions
+   * @param {import('./recorder.ts').SessionManager} opts.sessions
    * @param {number} [opts.cooldownMs]
    * @param {() => number} [opts.now] テスト用の時刻取得
    */
-  constructor({ channelIds, sessions, cooldownMs = DEFAULT_COOLDOWN_MS, now = Date.now }) {
+  constructor({ channelIds, sessions, cooldownMs = DEFAULT_COOLDOWN_MS, now = Date.now }: JoinPromptOptions) {
     this.channelIds = new Set(channelIds);
     this.sessions = sessions;
     this.cooldownMs = cooldownMs;
@@ -64,7 +77,7 @@ export class JoinPromptNotifier {
    * voiceStateUpdate から呼ぶ。通知すべきなら VC チャットへ投稿する。
    * @returns {Promise<boolean>} 投稿できたかどうか
    */
-  async handleVoiceState(oldState, newState) {
+  async handleVoiceState(oldState: VoiceStatePort, newState: VoiceStatePort) {
     const channelId = newState.channelId;
     if (!channelId || !this.channelIds.has(channelId)) return false;
     if (oldState.channelId === channelId) return false; // 同一VC内の状態変化(ミュート等)
@@ -109,7 +122,7 @@ export class JoinPromptNotifier {
     } catch (err) {
       // 一時的な失敗で5分間沈黙しないよう、クールダウンを戻して次の入室で再試行させる
       this.lastPromptedAt.delete(channelId);
-      console.error(`[join-prompt] failed to send prompt to channel ${channelId}: ${err.message}`);
+      console.error(`[join-prompt] failed to send prompt to channel ${channelId}: ${errorMessage(err)}`);
       return false;
     }
     return true;
@@ -129,11 +142,11 @@ export class JoinPromptNotifier {
  * @param {(opts:object)=>Promise<object>} deps.startSession 録音開始(コマンド経路と共通)
  * @param {() => Promise<{warning:string|null}>} [deps.checkDisk] 空き容量の警告(任意)
  */
-export async function handleStartButton(interaction, { sessions, startSession, checkDisk }) {
+export async function handleStartButton(interaction: StartButtonPort, { sessions, startSession, checkDisk }: { sessions: { get(guildId: string): unknown }; startSession(opts: StartOptions): Promise<{ id: string }>; checkDisk?: () => Promise<{ warning?: string | null }> }) {
   const channelId = interaction.customId.split(':')[1];
-  const guildId = interaction.guildId;
+  const guildId = interaction.guildId!;
 
-  const reply = (content) =>
+  const reply = (content: string) =>
     interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => {});
 
   // 既に録音中(別の人が先に開始した / /rec start 済み)。二重開始しない。
@@ -143,7 +156,8 @@ export async function handleStartButton(interaction, { sessions, startSession, c
     return false;
   }
 
-  const voiceChannelId = interaction.member?.voice?.channelId;
+  const member = interaction.member;
+  const voiceChannelId = member && 'voice' in member ? member.voice?.channelId : undefined;
   if (!voiceChannelId) {
     await reply('先にVCに参加してから録音を開始してください。');
     return false;
@@ -168,12 +182,12 @@ export async function handleStartButton(interaction, { sessions, startSession, c
       notifyChannelId: interaction.channelId,
     });
   } catch (err) {
-    console.error(`[join-prompt] start button failed (guild=${guildId}): ${err.message}`);
-    await reply(`録音を開始できませんでした: ${err.message}`);
+    console.error(`[join-prompt] start button failed (guild=${guildId}): ${errorMessage(err)}`);
+    await reply(`録音を開始できませんでした: ${errorMessage(err)}`);
     return false;
   }
 
-  const warning = checkDisk ? (await checkDisk().catch(() => ({}))).warning : null;
+  const warning = checkDisk ? (await checkDisk().catch(() => ({ warning: undefined }))).warning : null;
   await interaction.message
     ?.edit({
       content:
@@ -191,7 +205,7 @@ export async function handleStartButton(interaction, { sessions, startSession, c
  * @param {string|undefined} raw
  * @returns {string[]}
  */
-export function parsePromptChannelIds(raw) {
+export function parsePromptChannelIds(raw: string | undefined) {
   if (!raw) return [];
   return raw
     .split(',')

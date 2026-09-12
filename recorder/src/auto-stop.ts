@@ -18,6 +18,8 @@
  * member 未解決の在室者は人間扱いし、会議中の誤停止より停止抑制に倒す。
  * タイマーはインメモリ保持(recorder は単一インスタンス運用が前提)。
  */
+import type { AutoStopOptions, AutoStopState, AutoStopButtonPort, AutoSession, VoiceStatePort, GuildPort, ButtonRows } from './ports.ts';
+import { errorMessage } from './types.ts';
 import { MessageFlags } from 'discord.js';
 
 export const DEFAULT_EMPTY_DELAY_MS = 60_000;
@@ -29,7 +31,7 @@ export const EXTEND_MINUTES = [5, 15, 30];
  * プロンプトのボタン行を組む(discord.js builder を使わず raw component で表現)。
  * sessionId を customId に埋め、停止済みセッションの古いボタンを弾けるようにする。
  */
-export function buildPromptComponents(sessionId) {
+export function buildPromptComponents(sessionId: string): ButtonRows {
   return [
     {
       type: 1, // ActionRow
@@ -50,7 +52,7 @@ export function buildPromptComponents(sessionId) {
  * AUTO_STOP_EMPTY_SEC(秒) をミリ秒にパースする。
  * 未設定・不正値は既定(60秒)、0 は機能無効を意味する。
  */
-export function parseEmptyDelayMs(raw) {
+export function parseEmptyDelayMs(raw: string | null | undefined) {
   if (raw == null || raw === '') return DEFAULT_EMPTY_DELAY_MS;
   const sec = Number(raw);
   if (!Number.isFinite(sec) || sec < 0) return DEFAULT_EMPTY_DELAY_MS;
@@ -58,6 +60,13 @@ export function parseEmptyDelayMs(raw) {
 }
 
 export class AutoStopController {
+  declare sessions: AutoStopOptions['sessions'];
+  declare stop: AutoStopOptions['stop'];
+  declare fetchChannel: AutoStopOptions['fetchChannel'];
+  declare getGuild: AutoStopOptions['getGuild'];
+  declare emptyDelayMs: number;
+  declare timers: NonNullable<AutoStopOptions['timers']>;
+  declare states: Map<string, AutoStopState>;
   /**
    * @param {object} opts
    * @param {{get:(guildId:string)=>object|undefined}} opts.sessions SessionManager
@@ -67,22 +76,22 @@ export class AutoStopController {
    * @param {number} [opts.emptyDelayMs] 無人からの自動停止猶予
    * @param {{setTimeout:Function, clearTimeout:Function}} [opts.timers] テスト用タイマー注入
    */
-  constructor({ sessions, stop, fetchChannel, getGuild, emptyDelayMs = DEFAULT_EMPTY_DELAY_MS, timers }) {
+  constructor({ sessions, stop, fetchChannel, getGuild, emptyDelayMs = DEFAULT_EMPTY_DELAY_MS, timers }: AutoStopOptions) {
     this.sessions = sessions;
     this.stop = stop;
     this.fetchChannel = fetchChannel;
     this.getGuild = getGuild;
     this.emptyDelayMs = emptyDelayMs;
-    this.timers = timers ?? { setTimeout: (...a) => setTimeout(...a), clearTimeout: (id) => clearTimeout(id) };
+    this.timers = timers ?? { setTimeout: (callback, ms) => setTimeout(callback, ms), clearTimeout: (id) => clearTimeout(id ?? undefined) };
     /**
-     * @type {Map<string, {sessionId:string, phase:'countdown'|'extended', timer:any, message:object|null}>}
+     * @type {Map<string, {sessionId:string, phase:'countdown'|'extended', timer:TimerHandle, message:object|null}>}
      * guildId -> 進行中の無人確認状態
      */
     this.states = new Map();
   }
 
   /** voiceStateUpdate から呼ぶ。録音対象 VC の退出/入室だけに反応する。 */
-  async handleVoiceState(oldState, newState) {
+  async handleVoiceState(oldState: VoiceStatePort, newState: VoiceStatePort) {
     const guildId = newState.guild?.id ?? oldState.guild?.id;
     if (!guildId) return;
     const session = this.sessions.get(guildId);
@@ -108,9 +117,9 @@ export class AutoStopController {
   }
 
   /** customId が `autostop:` で始まるボタン interaction を処理する。 */
-  async handleButton(interaction) {
+  async handleButton(interaction: AutoStopButtonPort) {
     const [, action, sessionId, minutesRaw] = interaction.customId.split(':');
-    const guildId = interaction.guildId;
+    const guildId = interaction.guildId!;
     const session = this.sessions.get(guildId);
     const state = this.states.get(guildId);
 
@@ -157,7 +166,7 @@ export class AutoStopController {
   }
 
   /** /rec stop 等でセッションが外部から終了したとき、残っている確認状態を片付ける。 */
-  async notifySessionEnded(guildId) {
+  async notifySessionEnded(guildId: string) {
     await this._cancel(guildId, '⏹ 録音は終了しました。');
   }
 
@@ -166,15 +175,15 @@ export class AutoStopController {
    * member 未解決(キャッシュ漏れ)の在室者は人間扱い = 「無人ではない」と判定する。
    * voiceStates が取れない場合も停止しない側に倒す。
    */
-  _isVcEmpty(guild, channelId) {
+  _isVcEmpty(guild: GuildPort | undefined, channelId: string) {
     const cache = guild?.voiceStates?.cache;
     if (!cache) return false;
     const humans = cache.filter((vs) => vs.channelId === channelId && vs.member?.user?.bot !== true);
     return humans.size === 0;
   }
 
-  async _startCountdown(guildId, session) {
-    const state = { sessionId: session.id, phase: 'countdown', timer: null, message: null };
+  async _startCountdown(guildId: string, session: AutoSession) {
+    const state: AutoStopState = { sessionId: session.id, phase: 'countdown', timer: null, message: null };
     // send の await 前に登録し、退出イベント連発での多重カウントダウンを防ぐ
     this.states.set(guildId, state);
     // タイマーを先に張る: プロンプト投稿に失敗しても自動停止(無人録音の垂れ流し防止)は生かす
@@ -190,11 +199,11 @@ export class AutoStopController {
         components: buildPromptComponents(session.id),
       });
     } catch (err) {
-      console.error(`[auto-stop] failed to send prompt (guild=${guildId}): ${err.message}`);
+      console.error(`[auto-stop] failed to send prompt (guild=${guildId}): ${errorMessage(err)}`);
     }
   }
 
-  async _onCountdownExpired(guildId, state) {
+  async _onCountdownExpired(guildId: string, state: AutoStopState) {
     if (this.states.get(guildId) !== state) return; // キャンセル済み
     // 満了直前に延長ボタンが押された場合、このコールバックは既に実行キューに
     // 積まれていて clearTimeout が効かない。state は in-place 更新なので同一性
@@ -223,7 +232,7 @@ export class AutoStopController {
     await this.stop(guildId, 'auto');
   }
 
-  async _onExtensionExpired(guildId, state) {
+  async _onExtensionExpired(guildId: string, state: AutoStopState) {
     if (this.states.get(guildId) !== state) return;
     const session = this.sessions.get(guildId);
     if (!session || session.id !== state.sessionId) {
@@ -243,16 +252,16 @@ export class AutoStopController {
   }
 
   /** state のタイマーを張り直す。コールバックの reject はログへ落とす。 */
-  _armTimer(state, ms, cb) {
+  _armTimer(state: AutoStopState, ms: number, cb: () => Promise<void>) {
     state.timer = this.timers.setTimeout(
-      () => cb().catch((err) => console.error(`[auto-stop] timer error: ${err.message}`)),
+      () => cb().catch((err) => console.error(`[auto-stop] timer error: ${errorMessage(err)}`)),
       ms,
     );
-    state.timer.unref?.();
+    if (typeof state.timer === 'object') state.timer.unref?.();
   }
 
   /** 進行中の確認状態を破棄し、プロンプトを編集してボタンを無効化する。 */
-  async _cancel(guildId, content) {
+  async _cancel(guildId: string, content: string) {
     const state = this.states.get(guildId);
     if (!state) return;
     this.states.delete(guildId);
@@ -260,12 +269,12 @@ export class AutoStopController {
     await this._editMessage(state, content);
   }
 
-  async _editMessage(state, content) {
+  async _editMessage(state: AutoStopState, content: string) {
     if (!state.message) return;
     try {
       await state.message.edit({ content, components: [] });
     } catch (err) {
-      console.error(`[auto-stop] failed to edit prompt: ${err.message}`);
+      console.error(`[auto-stop] failed to edit prompt: ${errorMessage(err)}`);
     }
   }
 }

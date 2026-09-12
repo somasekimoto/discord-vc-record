@@ -49,6 +49,15 @@ corepack enable   # package.json の packageManager 指定の pnpm が自動で�
 
 ## recorder のセットアップ
 
+Node.js 22.18.0 以上が必要です。TypeScript は Node 標準の型ストリッピングで直接実行し、ビルド成果物は作りません。型チェックは別途 `pnpm run typecheck` で実行します。
+
+```bash
+cd recorder
+pnpm install --frozen-lockfile
+pnpm run typecheck
+pnpm test                 # ffmpeg 必須。Discord / OpenAI はテスト内の fake を使用
+```
+
 ```bash
 cd recorder
 pnpm install
@@ -93,8 +102,8 @@ pnpm run start         # Bot起動
 | セッションディレクトリ全体 | `RECORDINGS_RETENTION_DAYS` 経過後 | 正本は R2 側。ローカルは復旧用の控え |
 
 - 1セッションあたり 800MB〜1.2GB 程度を消費する（3人・1時間の実績値）
-- アップロードに**失敗した場合は PCM を残す**。wav を作り直せないと `reupload.js` での復旧手段まで失うため
-- 保持期間は `reupload.js` で復旧できる期間とのトレードオフ。既定 14 日は「アップロード失敗に気づいて復旧するには十分」という想定
+- アップロードに**失敗した場合は PCM を残す**。wav を作り直せないと `reupload.ts` での復旧手段まで失うため
+- 保持期間は `reupload.ts` で復旧できる期間とのトレードオフ。既定 14 日は「アップロード失敗に気づいて復旧するには十分」という想定
 - 録音中のセッションは保持期間を過ぎていても削除しない
 - 掃除の失敗は録音・文字起こしを巻き込まない（ログに残して続行する）
 - 録音開始時に空き容量を確認し、1.5GB を切っていたら警告を出す。**開始はブロックしない**（会議を録れない方が損失が大きいため、判断はユーザーに委ねる）
