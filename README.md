@@ -107,6 +107,10 @@ flyctl ssh console -C "sh -c 'rm -f /data/recordings/*/*.pcm && df -h /data'"
 
 ## web のセットアップ（Cloudflare）
 
+web の開発・テストは **Node >=22.18.0**。Worker は Wrangler がバンドルし、`.mts` テストは Node 標準の型ストリッピングで実行する（`tsc` は検査のみ）。
+
+既存の実 `web/wrangler.toml` はこの移行で上書きしない。更新時は変更内容を確認・承認したうえで **`main = "src/index.js"` を `main = "src/index.ts"` に手動変更**し、他の設定値は維持する。新規設定は `web/wrangler.toml.example` を使う。
+
 ```bash
 cd web
 pnpm install
@@ -124,6 +128,23 @@ pnpm run deploy                                 # 出力された workers.dev UR
 
 `wrangler.toml` の `database_id` と `WEB_BASE_URL` は自分の値に置き換える。
 Discord 側で OAuth2 リダイレクト URI に `<WEB_BASE_URL>/callback` を登録する。
+
+### web の秘密情報なしのローカル検証
+
+```bash
+cd web
+pnpm install --frozen-lockfile
+pnpm run typecheck
+pnpm test
+pnpm exec wrangler d1 execute vc-record --config wrangler.ci.toml --local --file=schema.sql
+pnpm exec wrangler dev --config wrangler.ci.toml --port 8788 --var INGEST_SECRET:smoke-test-secret
+# 別ターミナルの web/ で実行。終了後は上のdevをCtrl-Cで停止:
+SMOKE_BIG=1 node test/smoke.mts
+pnpm exec wrangler deploy --config wrangler.ci.toml --dry-run
+```
+
+`wrangler.ci.toml` は公開ダミー設定で、型生成/ローカル検証専用。本番deployには使用しない。`pnpm run dev` / `deploy` は従来通り実設定を使う。
+型生成される `worker-configuration.d.ts` は非追跡、secretは名前だけ `src/env.d.ts` で補足する。`pnpm test` は空きポートと専用の一時D1/R2保存先を自動確保し、終了時に破棄する。テストの境界・既存契約の注意点は [web/TESTING.md](web/TESTING.md) を参照。
 
 ## デプロイ
 

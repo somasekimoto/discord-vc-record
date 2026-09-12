@@ -1,6 +1,4 @@
-# web の取り込みフローE2Eスモーク。wrangler dev(ローカルのD1/R2エミュレーション)相手に
-# meta ingest → R2マルチパート(init/part/complete/abort)と各エラー経路を検証する。
-# SMOKE_BIG=1 で実運用サイズ(計105MiB > Cloudflareボディ上限)の分割アップロードも通す。
+# web の型検査と認証/認可/配信の回帰、実D1/R2の取り込みスモーク。
 name: smoke
 on:
   pull_request:
@@ -12,6 +10,10 @@ on:
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.18.0', '22', '24']
     defaults:
       run:
         working-directory: web
@@ -19,52 +21,42 @@ jobs:
       WRANGLER_SEND_METRICS: 'false'
     steps:
       - uses: actions/checkout@v4
-      # pnpm は package.json の packageManager 指定に従って corepack が用意する。
-      # setup-node の cache: pnpm より前に pnpm が居る必要があるのでこの順番。
-      # pnpm 12 (Rust版) は bin レイアウトが変わり古い corepack では解決できないため、
-      # corepack を最新へ更新してから enable する。
+      # pnpm 12 のbinレイアウト対応。既存のcorepack導入順を維持。
       - name: Enable corepack
         run: npm install -g corepack@latest && corepack enable
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
-      # --frozen-lockfile: lockfile と package.json がズレていたら CI を落とす
       - run: pnpm install --frozen-lockfile
-      # wrangler.toml は非コミット(実IDを含むため)。ローカルモードなら実IDは不要なので
-      # CI用の最小構成を生成する
-      - name: Generate CI wrangler.toml
-        run: |
-          cat > wrangler.toml <<'EOF'
-          name = "discord-vc-record-web-ci"
-          main = "src/index.js"
-          compatibility_date = "2026-06-01"
-          compatibility_flags = ["nodejs_compat"]
-
-          [[r2_buckets]]
-          binding = "BUCKET"
-          bucket_name = "vc-record"
-
-          [[d1_databases]]
-          binding = "DB"
-          database_name = "vc-record"
-          database_id = "00000000-0000-0000-0000-000000000000" # gitleaks:allow ダミーID(ローカルモードでは未使用)
-          EOF
+      # 実wrangler.toml/secretなしで公開CI設定から毎回生成する。
+      - run: pnpm run typecheck
+      - run: pnpm test
+      - name: Dry-run production entry bundle
+        run: pnpm exec wrangler deploy --config wrangler.ci.toml --dry-run
       - name: Apply schema to local D1
-        run: pnpm exec wrangler d1 execute vc-record --local --file=schema.sql
-      - name: Start wrangler dev
+        run: pnpm exec wrangler d1 execute vc-record --config wrangler.ci.toml --local --file=schema.sql
+      - name: Run local smoke tests
         run: |
-          pnpm exec wrangler dev --port 8788 --var INGEST_SECRET:smoke-test-secret > wrangler-dev.log 2>&1 &
-          for i in $(seq 1 60); do
-            curl -sf -o /dev/null http://127.0.0.1:8788/ && exit 0
+          pnpm exec wrangler dev --config wrangler.ci.toml --port 8788 --var INGEST_SECRET:smoke-test-secret > wrangler-dev.log 2>&1 &
+          worker_pid=$!
+          trap 'kill "$worker_pid" 2>/dev/null || true' EXIT
+          ready=false
+          for _ in $(seq 1 60); do
+            if curl -sf -o /dev/null http://127.0.0.1:8788/; then
+              ready=true
+              break
+            fi
+            if ! kill -0 "$worker_pid" 2>/dev/null; then break; fi
             sleep 1
           done
-          echo "wrangler dev did not become ready" >&2
-          cat wrangler-dev.log >&2
-          exit 1
-      - name: Run smoke tests
-        run: SMOKE_BIG=1 node test/smoke.mjs
+          if [ "$ready" != true ]; then
+            echo "wrangler dev did not become ready" >&2
+            cat wrangler-dev.log >&2
+            exit 1
+          fi
+          SMOKE_BIG=1 node test/smoke.mts
       - name: Show worker log on failure
         if: failure()
-        run: cat wrangler-dev.log
+        run: if [ -f wrangler-dev.log ]; then cat wrangler-dev.log; fi

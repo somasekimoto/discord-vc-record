@@ -4,11 +4,18 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@12.0.0+sha512.9e2e3dc3911995868dc94b8175c217c27e95408fa03b4a22749778f2b34f773b77cdd3b39ede8171b22fcd53be6a35342e9fac9948a68ef58df6488ce89a7e67",
+  "engines": { "node": ">=22.18.0" },
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "generate-types": "wrangler types --config wrangler.ci.toml --strict-vars=false",
+    "typecheck": "pnpm run generate-types && tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "test": "node --test 'test/*.test.mts'"
   },
   "devDependencies": {
+    "@types/node": "22.20.1",
+    "discord-api-types": "0.38.55",
+    "typescript": "5.9.3",
     "wrangler": "^4.0.0"
   }
 }
