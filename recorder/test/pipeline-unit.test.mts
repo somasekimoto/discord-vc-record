@@ -4,11 +4,11 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeUtterances, fmtOffset } from '../src/pipeline.js';
-import { BYTES_PER_SEC } from './helpers.mjs';
+import { mergeUtterances, fmtOffset } from '../src/pipeline.ts';
+import { BYTES_PER_SEC } from './helpers.mts';
 
 // 1秒 = BYTES_PER_SEC。読みやすいようにヘルパーで組む
-const utt = (startMs, endMs, byteStartSec, byteEndSec) => ({
+const utt = (startMs: number, endMs: number, byteStartSec: number, byteEndSec: number) => ({
   startedAt: startMs,
   endedAt: endMs,
   byteStart: Math.round(BYTES_PER_SEC * byteStartSec),

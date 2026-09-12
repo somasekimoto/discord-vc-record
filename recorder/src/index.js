@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Client, GatewayIntentBits, MessageFlags } from 'discord.js';
 import { SessionManager, NoActiveSessionError } from './recorder.js';
-import { process as runPipeline } from './pipeline.js';
+import { process as runPipeline } from './pipeline.ts';
 import {
   JoinPromptNotifier,
   parsePromptChannelIds,
