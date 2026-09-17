@@ -12,7 +12,7 @@
  */
 import { open, rm } from 'node:fs/promises';
 import { PCM_FORMAT } from './recorder.js';
-import { ffmpeg } from './ffmpeg.js';
+import { ffmpeg } from './ffmpeg.ts';
 
 const BYTES_PER_SEC = PCM_FORMAT.sampleRate * PCM_FORMAT.channels * (PCM_FORMAT.bitsPerSample / 8);
 // s16le stereo の1サンプルフレーム。全オフセットをこの境界に揃える

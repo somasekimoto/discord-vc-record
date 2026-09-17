@@ -10,6 +10,7 @@
  * pipeline 側で話者ごとのセクションを組む設計。将来 whisper-1 や
  * 録音側タイムスタンプでインターリーブする場合はここを差し替える。
  */
+import type { TranscribeOptions, Transcription } from './types.ts';
 import { createReadStream } from 'node:fs';
 import { stat, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -21,7 +22,7 @@ const MODEL = process.env.OPENAI_STT_MODEL ?? 'gpt-4o-transcribe';
 const MAX_BYTES = 24 * 1024 * 1024; // 25MB 制限に対し安全側
 const CHUNK_SECONDS = 1200; // 1500秒制限に対し安全側（20分）
 
-let _client = null;
+let _client: OpenAI | null = null;
 function client() {
   if (!_client) {
     if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY が設定されていません');
@@ -30,8 +31,8 @@ function client() {
   return _client;
 }
 
-function ffmpeg(args) {
-  return new Promise((resolve, reject) => {
+function ffmpeg(args: string[]) {
+  return new Promise<void>((resolve, reject) => {
     const p = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', ...args]);
     let err = '';
     p.stderr.on('data', (d) => (err += d));
@@ -40,7 +41,7 @@ function ffmpeg(args) {
   });
 }
 
-async function transcribeOne(filePath, language) {
+async function transcribeOne(filePath: string, language: string) {
   const res = await client().audio.transcriptions.create({
     file: createReadStream(filePath),
     model: MODEL,
@@ -54,7 +55,7 @@ async function transcribeOne(filePath, language) {
  * @param {string} audioPath  wav/mp3 等
  * @param {{language?: string}} opts
  */
-export async function transcribe(audioPath, { language = 'ja' } = {}) {
+export async function transcribe(audioPath: string, { language = 'ja' }: TranscribeOptions = {}): Promise<Transcription> {
   const { size } = await stat(audioPath);
 
   // 制限内ならそのまま送る

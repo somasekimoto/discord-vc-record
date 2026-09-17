@@ -10,7 +10,9 @@
  *    HTTP の transcribe ワーカーを立てて叩く。
  *  - large-v3 は重いので lazy-start / モデルキャッシュを検討。
  */
-export async function transcribe(_audioPath, _opts = {}) {
+import type { TranscribeOptions, Transcription } from './types.ts';
+
+export async function transcribe(_audioPath: string, _opts: TranscribeOptions = {}): Promise<Transcription> {
   throw new Error(
     'ローカル STT(faster-whisper) は未実装です。STT_PROVIDER=openai を使うか、stt/local.js を実装してください。',
   );

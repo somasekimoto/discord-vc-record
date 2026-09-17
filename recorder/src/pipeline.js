@@ -21,11 +21,11 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PCM_FORMAT } from './recorder.js';
-import { ffmpeg } from './ffmpeg.js';
+import { ffmpeg } from './ffmpeg.ts';
 import { buildMixedAudio } from './mix.js';
-import { transcribe, getProviderName } from './stt/index.js';
+import { transcribe, getProviderName } from './stt/index.ts';
 import { uploadToWeb } from './upload.js';
-import { deletePcmFiles } from './cleanup.js';
+import { deletePcmFiles } from './cleanup.ts';
 
 const BYTES_PER_SEC = PCM_FORMAT.sampleRate * PCM_FORMAT.channels * (PCM_FORMAT.bitsPerSample / 8);
 // 同一話者の発話間ギャップがこれ以下なら 1 区間に結合(STT 呼び出し数と文脈切れを抑える)

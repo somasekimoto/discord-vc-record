@@ -11,10 +11,11 @@
  *     engine: string,
  *   }>
  */
-import { transcribe as openaiTranscribe } from './openai.js';
-import { transcribe as localTranscribe } from './local.js';
+import type { Transcribe, TranscribeOptions } from './types.ts';
+import { transcribe as openaiTranscribe } from './openai.ts';
+import { transcribe as localTranscribe } from './local.ts';
 
-const PROVIDERS = {
+const PROVIDERS: Record<string, Transcribe> = {
   openai: openaiTranscribe,
   local: localTranscribe,
 };
@@ -28,7 +29,7 @@ export function getProviderName() {
  * @param {object} [opts]
  * @param {string} [opts.language] ISO-639-1(例: 'ja')
  */
-export async function transcribe(audioPath, opts = {}) {
+export async function transcribe(audioPath: string, opts: TranscribeOptions = {}) {
   const name = getProviderName();
   const impl = PROVIDERS[name];
   if (!impl) {
