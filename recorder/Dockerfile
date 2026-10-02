@@ -1,7 +1,7 @@
 # recorder (Discord 録音Bot) — Fly.io 常駐コンテナ
 # ネイティブモジュール(@discordjs/opus, @snazzah/davey)のビルドに toolchain が要る。
 # 文字起こしの ffmpeg も同梱する。
-FROM node:22.18-bookworm-slim
+FROM node:22-bookworm-slim
 
 # ネイティブビルド用ツール + ffmpeg
 RUN apt-get update && apt-get install -y --no-install-recommends \
