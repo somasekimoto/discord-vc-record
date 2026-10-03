@@ -9,8 +9,7 @@
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
     "types": ["node"],
-    "allowJs": true,
-    "checkJs": false
+    "allowJs": false
   },
   "include": ["src/**/*.ts", "test/**/*.mts"]
 }

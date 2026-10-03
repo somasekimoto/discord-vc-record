@@ -34,4 +34,4 @@ ENV RECORDINGS_DIR=/data/recordings
 RUN mkdir -p /data/recordings
 
 # Bot は HTTP を待ち受けない（Gateway 常駐）。
-CMD ["node", "src/index.js"]
+CMD ["node", "src/index.ts"]

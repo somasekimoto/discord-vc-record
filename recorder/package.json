@@ -5,10 +5,10 @@
   "type": "module",
   "description": "Discord VC recorder bot (Fly.io). Records per-user tracks, transcribes, uploads to R2/D1.",
   "scripts": {
-    "spike": "node src/spike.js",
-    "register": "node src/register-commands.js",
-    "start": "node src/index.js",
-    "test": "node --test 'test/*.test.mjs' 'test/*.test.mts'",
+    "spike": "node src/spike.ts",
+    "register": "node src/register-commands.ts",
+    "start": "node src/index.ts",
+    "test": "node --test 'test/*.test.mts'",
     "typecheck": "tsc --noEmit",
     "reupload": "node src/reupload.ts"
   },

@@ -1,6 +1,6 @@
 /**
- * commands.js — スラッシュコマンド定義(JSON)。
- * register-commands.js が Discord へ登録し、index.js が実行を処理する。
+ * commands.ts — スラッシュコマンド定義(JSON)。
+ * register-commands.ts が Discord へ登録し、index.ts が実行を処理する。
  */
 import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
 

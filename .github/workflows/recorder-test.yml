@@ -41,3 +41,37 @@ jobs:
       - run: pnpm run typecheck
         if: matrix.node == '22.18.0'
       - run: pnpm test
+
+  # 本番と同じ --prod install + native stripping。Discord には接続しない。
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # apt / node-gyp(@discordjs/opus) のレイヤを GHA cache で再利用する。load で probe 用にローカルへ残す。
+      - uses: docker/setup-buildx-action@v3
+      - name: Build production image
+        uses: docker/build-push-action@v6
+        with:
+          context: recorder
+          load: true
+          tags: discord-vc-recorder:ts-check
+          cache-from: type=gha
+          # fork PR の読み取り専用 token では cache 書き込みが拒否されうる。cache は任意なので失敗で落とさない。
+          cache-to: type=gha,mode=max,ignore-error=true
+      - name: Probe production modules and native Opus
+        run: |
+          docker run --rm discord-vc-recorder:ts-check node --input-type=module -e '
+            await import("./src/recorder.ts");
+            await import("./src/pipeline.ts");
+            const { default: prism } = await import("prism-media");
+            const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
+            let bytes = 0;
+            decoder.on("data", (chunk) => { bytes += chunk.length; });
+            await new Promise((resolve, reject) => {
+              decoder.on("end", resolve);
+              decoder.on("error", reject);
+              decoder.end(Buffer.from([0xf8, 0xff, 0xfe]));
+            });
+            if (bytes === 0) throw new Error("native decoder produced no PCM");
+            console.log("module-load-ok", bytes);
+          '

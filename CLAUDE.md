@@ -6,7 +6,7 @@ Discord VC を録音・日本語文字起こしし、ロール保有者だけが
 
 ## 構成（2つの独立したデプロイ物）
 
-- **`recorder/`** — 録音 Bot（Node.js 22+, Fly.io 常駐）。Discord VC への UDP 常駐受信はサーバーレス不可のため、ここだけ常駐ホスト。
+- **`recorder/`** — 録音 Bot（Node.js 22.18+, Fly.io 常駐）。Discord VC への UDP 常駐受信はサーバーレス不可のため、ここだけ常駐ホスト。
 - **`web/`** — WebUI + 認証 + 取り込み（Cloudflare Workers + R2 + D1）。
 
 データフロー: recorder が話者別に PCM 録音 → `/rec stop` で `pipeline.ts` が wav 化・STT・時系列マージ・全体ミックス生成（`mix.ts`、発話区間を実時刻に配置した `mixed.m4a`）→ `upload.ts` が web の `/ingest` へ POST（メタ+transcript）、音声（話者別 wav + `userId=mixed` のミックス）は R2 マルチパート（`/ingest/audio/init|part|complete|abort`）で分割アップロード → web が D1/R2 から配信。
@@ -16,6 +16,7 @@ Discord VC を録音・日本語文字起こしし、ロール保有者だけが
 ### recorder（`cd recorder`）
 
 ```bash
+pnpm run typecheck                        # strict 型チェック（型ストリッピング自体は型検査しない）
 pnpm test                                 # 全テスト（node:test。統合テストは ffmpeg 必須）
 node --test test/pipeline-unit.test.mts   # 単一テストファイル
 pnpm run register                         # スラッシュコマンドを Discord へ登録
@@ -40,8 +41,8 @@ node test/smoke.mjs                       # 取り込みフロー E2E（wrangler
 - **`/ingest/audio/complete` は冪等**。recorder はレスポンス喪失時に complete をリトライするため、完了済みでもオブジェクトが存在すれば 200 を返す。
 - **認可は毎リクエスト Discord に問い合わせ**（`web/src/authz.js`）。ギルドの `required_role_id`（D1 `guild_config`、`/setup` で設定）の保有を確認する。
 - **STT はプロバイダ抽象化**（`recorder/src/stt/index.ts`）。`pipeline.ts` は `transcribe()` だけを呼ぶ。プロバイダ追加 = ファイル1枚 + 分岐1行。既定は OpenAI `gpt-4o-transcribe`、`STT_PROVIDER` で切替。
-- 入室プロンプト（`join-prompt.js`）の「最初の1人」判定は voiceStates ベースの best-effort。member 未解決の在室者は人間扱いし、誤通知より通知抑制に倒す。プロンプトの「録音を開始」ボタン（`customId` は `recstart:<channelId>`）と `/rec start` は `index.js` の `startSession` を共有する。二重開始の排他は `SessionManager.start` の `byGuild` 登録が担保（後着は throw）。
-- 自動停止（`auto-stop.js`）の無人判定も同じく voiceStates ベース。member 未解決の在室者は人間扱いし、会議中の誤停止より停止抑制に倒す。停止経路（自動/ボタン/`/rec stop`）は競合しうるため `index.js` の `stopSessionSafe` で冪等化している。
+- 入室プロンプト（`join-prompt.ts`）の「最初の1人」判定は voiceStates ベースの best-effort。member 未解決の在室者は人間扱いし、誤通知より通知抑制に倒す。プロンプトの「録音を開始」ボタン（`customId` は `recstart:<channelId>`）と `/rec start` は `index.ts` の `startSession` を共有する。二重開始の排他は `SessionManager.start` の `byGuild` 登録が担保（後着は throw）。
+- 自動停止（`auto-stop.ts`）の無人判定も同じく voiceStates ベース。member 未解決の在室者は人間扱いし、会議中の誤停止より停止抑制に倒す。停止経路（自動/ボタン/`/rec stop`）は競合しうるため `index.ts` の `stopSessionSafe` で冪等化している。
 
 - **パッケージマネージャは pnpm 固定**（`packageManager` で版も固定、`npm install` は使わない）。サプライチェーン攻撃対策の設定が `pnpm-workspace.yaml` にあり、npm ではその防御が丸ごと無効になるため。recorder / web はそれぞれ独立した pnpm プロジェクト（lockfile も別）で、単一 workspace にはまとめていない — 別々のデプロイ物で依存も交わらず、統合すると web の依存更新が recorder の Docker レイヤキャッシュを壊すため。
 - **ビルドスクリプトはホワイトリスト方式**（pnpm 11 の既定で拒否）。`pnpm-workspace.yaml` の `allowBuilds` に書いたパッケージだけが実行を許される。**`@discordjs/opus` の許可を外すと録音が壊れる**（node-gyp のネイティブビルドが必須）。依存追加時に `ERR_PNPM_IGNORED_BUILDS` が出たら、中身を確認したうえで `allowBuilds` に追記する。`dangerouslyAllowAllBuilds` は使わない。Dockerfile は install 前に `pnpm-workspace.yaml` を COPY すること（無いとビルドが拒否され録音不能なイメージができる）。

@@ -25,9 +25,8 @@ export function getProviderName() {
 }
 
 /**
- * @param {string} audioPath  文字起こし対象の音声ファイル(wav/mp3 等)
- * @param {object} [opts]
- * @param {string} [opts.language] ISO-639-1(例: 'ja')
+ * @param audioPath 文字起こし対象の音声ファイル(wav/mp3 等)
+ * @param [opts.language] ISO-639-1(例: 'ja')
  */
 export async function transcribe(audioPath: string, opts: TranscribeOptions = {}) {
   const name = getProviderName();

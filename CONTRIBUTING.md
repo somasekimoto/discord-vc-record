@@ -28,6 +28,7 @@ Issues for bugs, questions and feature ideas are equally welcome.
 # recorder
 cd recorder
 pnpm install --frozen-lockfile
+pnpm run typecheck   # tsc --noEmit (strict)
 pnpm test            # node:test; Discord and OpenAI are faked, ffmpeg is real
 
 # web
@@ -68,7 +69,8 @@ This is the most self-contained contribution. `recorder/src/stt/local.ts` (faste
 
 - ESM `import` / `export`, two-space indentation, semicolons, single quotes
 - Small functions with explicit names (`handleIngest`, `setRequiredRole`, `parsePromptChannelIds`)
-- Test files: `*.test.mjs` in `recorder/test/`
+- TypeScript must stay erasable (`erasableSyntaxOnly`): no `enum`, `namespace`, or parameter properties; use `import type` for type-only imports and include the `.ts` extension in relative imports
+- Test files: `*.test.mts` in `recorder/test/` (only this pattern is picked up by `pnpm test`)
 - User-facing strings are currently mostly Japanese; keep nearby text consistent rather than mixing languages within one message
 
 ## Commits and pull requests

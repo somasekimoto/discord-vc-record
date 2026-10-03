@@ -13,7 +13,7 @@
 import type { FileHandle } from 'node:fs/promises';
 import type { SessionSnapshot, Track } from './types.ts';
 import { open, rm } from 'node:fs/promises';
-import { PCM_FORMAT } from './recorder.js';
+import { PCM_FORMAT } from './recorder.ts';
 import { ffmpeg } from './ffmpeg.ts';
 
 type MixTrack = Pick<Track, 'pcmPath' | 'bytes' | 'utterances'>;
@@ -34,13 +34,13 @@ const msToBytes = (ms: number) => alignDown(Math.max(0, Math.round((ms / 1000) *
 /**
  * ミックスの配置計画を作る(純粋関数)。
  *
- * @param {{startedAt:number, endedAt:number}} summary
- * @param {Array<{pcmPath:string, bytes:number, utterances:Array}>} tracks
- * @returns {{totalBytes:number, tracks:Array<{srcPath:string, segments:Array<{srcStart:number, length:number, dstOffset:number}>}>}|null}
- *   配置できる発話が1つも無ければ null(旧録音など utterances 未記録のトラックは除外)
+ * @returns 配置できる発話が1つも無ければ null(旧録音など utterances 未記録のトラックは除外)
  */
 export function computeMixPlan(summary: MixSummary, tracks: MixTrack[]) {
-  let totalBytes = msToBytes((summary.endedAt ?? summary.startedAt) - summary.startedAt);
+  // 開始時刻が無いと実時間軸が決まらない(0 起点だと epoch からの巨大オフセットになる)。
+  const origin = summary.startedAt;
+  if (origin == null) return null;
+  let totalBytes = msToBytes((summary.endedAt ?? origin) - origin);
   const planTracks = [];
 
   for (const t of tracks) {
@@ -51,7 +51,7 @@ export function computeMixPlan(summary: MixSummary, tracks: MixTrack[]) {
       const srcEnd = alignDown(Math.min(u.byteEnd, t.bytes));
       const length = srcEnd - srcStart;
       if (length <= 0) continue;
-      const dstOffset = msToBytes(u.startedAt - summary.startedAt);
+      const dstOffset = msToBytes(u.startedAt - origin);
       segments.push({ srcStart, length, dstOffset });
       totalBytes = Math.max(totalBytes, dstOffset + length);
     }
@@ -111,7 +111,7 @@ export async function writeMixedPcm(plan: MixPlan, outPath: string) {
 /**
  * セッション全体のミックス音声(m4a)を生成する。
  *
- * @returns {Promise<{path:string, durationSec:number}|null>} 配置できる発話が無ければ null
+ * @returns 配置できる発話が無ければ null
  */
 export async function buildMixedAudio(summary: MixSummary, tracks: MixTrack[], outPath: string) {
   const plan = computeMixPlan(summary, tracks);

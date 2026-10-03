@@ -1,5 +1,5 @@
 /**
- * register-commands.js — スラッシュコマンドを Discord に登録する。
+ * register-commands.ts — スラッシュコマンドを Discord に登録する。
  *
  * 使い方: npm run register
  * GUILD_ID があればそのギルドへ即時登録(開発向け・反映が速い)。
@@ -7,7 +7,7 @@
  */
 import 'dotenv/config';
 import { REST, Routes } from 'discord.js';
-import { commands } from './commands.js';
+import { commands } from './commands.ts';
 
 const { DISCORD_TOKEN, DISCORD_CLIENT_ID, GUILD_ID } = process.env;
 

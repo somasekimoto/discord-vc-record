@@ -22,7 +22,7 @@ import { errorMessage } from './types.ts';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PCM_FORMAT } from './recorder.js';
+import { PCM_FORMAT } from './recorder.ts';
 import { ffmpeg } from './ffmpeg.ts';
 import { buildMixedAudio } from './mix.ts';
 import { transcribe, getProviderName } from './stt/index.ts';
@@ -106,9 +106,7 @@ async function runWithConcurrency(jobs: (() => Promise<void>)[], limit: number) 
 /**
  * 録音セッションを文字起こしして時系列の議事録を生成する。
  *
- * @param {object} summary  RecordingSession._summary() の戻り
- * @param {Array<{userId,displayName,pcmPath,bytes,durationSec,utterances}>} tracks
- * @returns {Promise<{ markdown: string, minutes: object, files: {wavPaths: string[], mdPath: string, jsonPath: string} }>}
+ * @param summary RecordingSession._summary() の戻り
  */
 export async function process(summary: SessionSnapshot, tracks: Track[]) {
   const dir = summary.dir;
@@ -130,7 +128,6 @@ export async function process(summary: SessionSnapshot, tracks: Track[]) {
   }
 
   // 2. 発話区間ごとに切り出して STT。全話者分のジョブをまとめて並列実行する。
-  /** @type {Array<{userId,displayName,startedAt,endedAt,text}>} */
   const utterances: TranscriptUtterance[] = [];
   // 発話区間が記録されていないトラック(旧録音・異常系)の旧方式(トラック全体一括)結果
   const noTimelineSpeakers: Pick<TranscriptUtterance, 'userId' | 'displayName' | 'text'>[] = [];
@@ -264,7 +261,7 @@ export async function process(summary: SessionSnapshot, tracks: Track[]) {
     lines.push('');
   }
   for (const u of utterances) {
-    const at = fmtOffset(u.startedAt - summary.startedAt);
+    const at = summary.startedAt == null ? '--:--' : fmtOffset(u.startedAt - summary.startedAt);
     lines.push(`**[${at}] ${u.displayName}**: ${u.text.replace(/\s*\n\s*/g, ' ')}`);
     lines.push('');
   }
