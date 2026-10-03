@@ -11,10 +11,7 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     # 本番は Cloudflare Workers(workerd)で Node を使わない。Node は wrangler / テスト / smoke クライアント用なので、
-    # package.json engines の下限 1 本で検証する(本番に合わせる対象は wrangler の compatibility_date/flags)。
-    strategy:
-      matrix:
-        node: ['22.18.0']
+    # web/package.json engines の下限 1 本で検証する(本番に合わせる対象は wrangler の compatibility_date/flags)。
     defaults:
       run:
         working-directory: web
@@ -22,12 +19,19 @@ jobs:
       WRANGLER_SEND_METRICS: 'false'
     steps:
       - uses: actions/checkout@v4
+      # 下限は engines("node": ">=x.y.z")から読む。node-version-file は範囲を最新に解決してしまうので使わない。
+      - id: node
+        run: |
+          min=$(jq -r '.engines.node' package.json | sed -nE 's/^>=([0-9]+\.[0-9]+\.[0-9]+)$/\1/p')
+          if [ -z "$min" ]; then echo "web/package.json の engines.node を >=x.y.z として読めない" >&2; exit 1; fi
+          echo "engines minimum: $min"
+          echo "min=$min" >> "$GITHUB_OUTPUT"
       # pnpm 12 のbinレイアウト対応。既存のcorepack導入順を維持。
       - name: Enable corepack
         run: npm install -g corepack@latest && corepack enable
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version: ${{ steps.node.outputs.min }}
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile

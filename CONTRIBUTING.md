@@ -41,7 +41,7 @@ node test/smoke.mts
 SMOKE_BIG=1 node test/smoke.mts   # large-upload path
 ```
 
-CI runs gitleaks on every PR. The recorder type check and tests run when `recorder/**` changes. The web type check, regression tests, production-entry `deploy --dry-run` and smoke test (Node 22.18.0) run when `web/**` changes.
+CI runs gitleaks on every PR. The recorder type check and tests run when `recorder/**` changes. The web type check, regression tests, production-entry `deploy --dry-run` and smoke test (on the `engines` minimum Node) run when `web/**` changes.
 
 ## Adding an STT provider
 
