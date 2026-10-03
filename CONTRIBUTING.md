@@ -5,7 +5,7 @@ Issues for bugs, questions and feature ideas are equally welcome.
 
 ## Prerequisites
 
-- Node.js `>=22`
+- Node.js `>=22.18.0` (TypeScript runs directly via Node's native type stripping; there is no build step)
 - pnpm via corepack — run `corepack enable` once; the pinned version in each `package.json` is used automatically.
   **Do not run `npm install`.** Supply-chain defenses live in `pnpm-workspace.yaml` and are silently ignored by npm.
 - `ffmpeg` on your PATH (recorder tests need it)
@@ -40,7 +40,7 @@ node test/smoke.mts
 SMOKE_BIG=1 node test/smoke.mts   # large-upload path
 ```
 
-CI runs the recorder tests, the web smoke test and gitleaks on every PR.
+CI runs the recorder tests, the web type check, regression tests, production-entry `deploy --dry-run` and smoke test (Node 22.18.0 / 22 / 24), and gitleaks on every PR.
 
 ## Adding an STT provider
 

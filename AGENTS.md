@@ -21,11 +21,11 @@ Keep generated recordings, real `.env` files, `fly.toml`, and `wrangler.toml` ou
 - `cd web && pnpm run deploy`: deploy the Worker.
 - `cd web && pnpm run typecheck`: generate Worker types from `wrangler.ci.toml` and run strict TypeScript checks.
 - `cd web && pnpm test`: run HTTP regression tests against a throwaway local Worker (no secrets or Cloudflare account needed).
-- `cd web && node test/smoke.mts`: run the ingest smoke test against a local Worker after applying `schema.sql` and starting Wrangler with `--config wrangler.ci.toml` as documented in the test header.
+- `cd web && node test/smoke.mts`: run the ingest smoke test against a local Worker after applying `schema.sql` and starting Wrangler, both with `--config wrangler.ci.toml`, exactly as documented in the test header.
 
 ## Coding Style & Naming Conventions
 
-Use ESM `import`/`export`, two-space indentation, semicolons, and single quotes. Prefer small functions with explicit names such as `handleIngest`, `setRequiredRole`, or `parsePromptChannelIds`. Test files should use the `.test.mjs` suffix when run by `pnpm test`. Existing user-facing text is mostly Japanese; keep nearby language consistent.
+Use ESM `import`/`export`, two-space indentation, semicolons, and single quotes. Prefer small functions with explicit names such as `handleIngest`, `setRequiredRole`, or `parsePromptChannelIds`. Test files run by `pnpm test` use the `.test.mjs` suffix in `recorder/` and `.test.mts` in `web/`. Existing user-facing text is mostly Japanese; keep nearby language consistent.
 
 ## Testing Guidelines
 

@@ -28,10 +28,14 @@ node src/reupload.js <sessionId>          # アップロードだけ失敗した
 ```bash
 pnpm run dev                              # wrangler dev（ローカル D1/R2 エミュレーション）
 pnpm run deploy                           # wrangler deploy
-pnpm exec wrangler d1 execute <db> --local --file=schema.sql   # ローカル D1 にスキーマ適用
+pnpm exec wrangler d1 execute <db> --local --file=schema.sql   # ローカル D1 にスキーマ適用（実 wrangler.toml）
 pnpm run typecheck                        # Worker 型を wrangler.ci.toml から生成して strict 型チェック
 pnpm test                                 # HTTP 回帰テスト（一時 Worker を自動起動。secret 不要）
-node test/smoke.mts                       # 取り込みフロー E2E（wrangler dev --config wrangler.ci.toml :8788 を先に起動。SMOKE_BIG=1 で 105MiB 分割も検証）
+
+# 取り込みフロー E2E。smoke は wrangler.ci.toml のローカル D1 を使うので schema も同じ config に適用する
+pnpm exec wrangler d1 execute vc-record --config wrangler.ci.toml --local --file=schema.sql
+pnpm exec wrangler dev --config wrangler.ci.toml --port 8788 --var INGEST_SECRET:smoke-test-secret
+node test/smoke.mts                       # 別ターミナルで。SMOKE_BIG=1 で 105MiB 分割も検証
 ```
 
 ## アーキテクチャ上の重要な不変条件
