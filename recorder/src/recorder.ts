@@ -78,6 +78,8 @@ export class RecordingSession {
   declare pendingPipelines: Set<Promise<void>>;
   declare trackStates: Map<string, TrackState>;
   /**
+   * @param opts.client ログイン済みの discord.js Client
+   * @param opts.guildId 録音対象のギルド
    * @param opts.channelId 録音対象の VC
    * @param opts.startedByUserId /record start を打った人
    * @param opts.baseDir 録音ファイルの保存先ルート (例: ./recordings)
