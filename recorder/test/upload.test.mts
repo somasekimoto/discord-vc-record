@@ -125,6 +125,8 @@ test('reupload: utterances のない旧保存 JSON と既存音声から復旧�
   assert.equal(f.requests.filter((r) => r.path.endsWith('/part')).length, 1);
   const meta = f.requests.find((r) => r.path === '/ingest');
   assert.ok(meta);
-  assert.match(meta.body.toString(), /旧録音/);
+  // meta の speakers にも '旧録音' があるので、保存ファイル固有の内容で multipart の添付を確かめる。
+  assert.match(meta.body.toString(), /filename="transcript\.md"[\s\S]*?# 旧録音/);
+  assert.match(meta.body.toString(), /filename="transcript\.json"/);
   assert.doesNotMatch(meta.body.toString(), /"utterances"/);
 });
