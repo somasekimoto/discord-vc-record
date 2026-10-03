@@ -1,5 +1,5 @@
 /**
- * stt/local.js — ローカル文字起こし（faster-whisper）— スタブ
+ * stt/local.ts — ローカル文字起こし（faster-whisper）— スタブ
  *
  * MVP では未配線。STT_PROVIDER=local にした時の枠だけ用意してある。
  * 将来ここで faster-whisper（Python サイドカー or CLI）を呼び、
@@ -14,6 +14,6 @@ import type { TranscribeOptions, Transcription } from './types.ts';
 
 export async function transcribe(_audioPath: string, _opts: TranscribeOptions = {}): Promise<Transcription> {
   throw new Error(
-    'ローカル STT(faster-whisper) は未実装です。STT_PROVIDER=openai を使うか、stt/local.js を実装してください。',
+    'ローカル STT(faster-whisper) は未実装です。STT_PROVIDER=openai を使うか、stt/local.ts を実装してください。',
   );
 }

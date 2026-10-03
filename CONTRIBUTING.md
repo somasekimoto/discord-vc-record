@@ -42,7 +42,7 @@ CI runs the recorder tests, the web smoke test and gitleaks on every PR.
 
 ## Adding an STT provider
 
-This is the most self-contained contribution. `recorder/src/stt/local.js` (faster-whisper) is currently a stub.
+This is the most self-contained contribution. `recorder/src/stt/local.ts` (faster-whisper) is currently a stub.
 
 1. Create `recorder/src/stt/<name>.js` exporting
 
@@ -56,7 +56,7 @@ This is the most self-contained contribution. `recorder/src/stt/local.js` (faste
    }
    ```
 
-2. Register it in `recorder/src/stt/index.js` by adding one line to `PROVIDERS`.
+2. Register it in `recorder/src/stt/index.ts` by adding one line to `PROVIDERS`.
 3. Document any new environment variables in `recorder/.env.example` and the README table.
 4. Add a test under `recorder/test/` that exercises your provider with a fake backend.
 
