@@ -187,9 +187,10 @@ async function handleRecord(interaction: ChatInputCommandInteraction) {
     if (!session) {
       await interaction.reply({ content: '現在このサーバーで録音は行われていません。', flags: MessageFlags.Ephemeral });
     } else {
-      const mins = ((Date.now() - Number(session.startedAt)) / 60000).toFixed(1);
+      // start() 完了前(VC 接続中)は startedAt が未確定。0 起点の巨大な経過時間を出さない。
+      const elapsed = session.startedAt == null ? '開始処理中' : `${((Date.now() - session.startedAt) / 60000).toFixed(1)}分経過`;
       await interaction.reply({
-        content: `🔴 録音中（${mins}分経過、参加者 ${session.participants.size}名）`,
+        content: `🔴 録音中（${elapsed}、参加者 ${session.participants.size}名）`,
         flags: MessageFlags.Ephemeral,
       });
     }

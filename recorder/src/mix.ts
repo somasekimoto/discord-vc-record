@@ -37,7 +37,10 @@ const msToBytes = (ms: number) => alignDown(Math.max(0, Math.round((ms / 1000) *
  * @returns 配置できる発話が1つも無ければ null(旧録音など utterances 未記録のトラックは除外)
  */
 export function computeMixPlan(summary: MixSummary, tracks: MixTrack[]) {
-  let totalBytes = msToBytes(Number(summary.endedAt ?? summary.startedAt) - Number(summary.startedAt));
+  // 開始時刻が無いと実時間軸が決まらない(0 起点だと epoch からの巨大オフセットになる)。
+  const origin = summary.startedAt;
+  if (origin == null) return null;
+  let totalBytes = msToBytes((summary.endedAt ?? origin) - origin);
   const planTracks = [];
 
   for (const t of tracks) {
@@ -48,7 +51,7 @@ export function computeMixPlan(summary: MixSummary, tracks: MixTrack[]) {
       const srcEnd = alignDown(Math.min(u.byteEnd, t.bytes));
       const length = srcEnd - srcStart;
       if (length <= 0) continue;
-      const dstOffset = msToBytes(u.startedAt - Number(summary.startedAt));
+      const dstOffset = msToBytes(u.startedAt - origin);
       segments.push({ srcStart, length, dstOffset });
       totalBytes = Math.max(totalBytes, dstOffset + length);
     }

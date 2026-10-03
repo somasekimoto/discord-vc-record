@@ -261,7 +261,7 @@ export async function process(summary: SessionSnapshot, tracks: Track[]) {
     lines.push('');
   }
   for (const u of utterances) {
-    const at = fmtOffset(u.startedAt - Number(summary.startedAt));
+    const at = summary.startedAt == null ? '--:--' : fmtOffset(u.startedAt - summary.startedAt);
     lines.push(`**[${at}] ${u.displayName}**: ${u.text.replace(/\s*\n\s*/g, ' ')}`);
     lines.push('');
   }

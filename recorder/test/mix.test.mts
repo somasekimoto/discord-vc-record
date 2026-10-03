@@ -27,6 +27,13 @@ test('computeMixPlan: 発話が実時刻オフセットに配置され、総量�
   ]);
 });
 
+test('computeMixPlan: 開始時刻が未確定なら epoch 起点で配置せず null を返す', () => {
+  const plan = computeMixPlan({ startedAt: null, endedAt: 10_000 }, [
+    track(BYTES_PER_SEC, [{ startedAt: 1_700_000_000_000, endedAt: 1_700_000_001_000, byteStart: 0, byteEnd: BYTES_PER_SEC }]),
+  ]);
+  assert.equal(plan, null);
+});
+
 test('computeMixPlan: セッション終了時刻を超える発話は総量を押し広げる', () => {
   const summary = { startedAt: 0, endedAt: 1000 };
   const plan = computeMixPlan(summary, [
