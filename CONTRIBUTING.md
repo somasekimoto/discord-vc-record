@@ -33,9 +33,11 @@ pnpm test            # node:test; Discord and OpenAI are faked, ffmpeg is real
 # web
 cd web
 pnpm install --frozen-lockfile
-# ingest smoke test against a local Worker — see the header of web/test/smoke.mjs for setup
-node test/smoke.mjs
-SMOKE_BIG=1 node test/smoke.mjs   # large-upload path
+pnpm run typecheck
+pnpm test            # HTTP regression tests; starts a throwaway local Worker, no secrets needed
+# ingest smoke test against a local Worker — see the header of web/test/smoke.mts for setup
+node test/smoke.mts
+SMOKE_BIG=1 node test/smoke.mts   # large-upload path
 ```
 
 CI runs the recorder tests, the web smoke test and gitleaks on every PR.
