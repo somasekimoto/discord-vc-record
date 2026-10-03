@@ -5,6 +5,7 @@
 Node >=22.18.0 と、packageManagerで固定したpnpmを使う。実secret/Cloudflareアカウント不要のfresh checkout/worktreeで検証できる。
 
 ```sh
+cd web
 pnpm install --frozen-lockfile
 pnpm run typecheck
 pnpm test
@@ -16,6 +17,7 @@ pnpm exec wrangler deploy --config wrangler.ci.toml --dry-run
 追加の取り込み検証:
 
 ```sh
+cd web
 pnpm exec wrangler d1 execute vc-record --config wrangler.ci.toml --local --file=schema.sql
 pnpm exec wrangler dev --config wrangler.ci.toml --port 8788 --var INGEST_SECRET:smoke-test-secret
 # 別ターミナル:
@@ -36,7 +38,7 @@ SMOKE_BIG=1 node test/smoke.mts
 
 ## テストの境界
 
-`test/worker.ts` は **テスト専用エントリ**。Wrangler CLIのentry引数で回帰テスト時だけ指定する。実設定、example、CI設定、deploy scriptのmainはいずれも `src/index.ts`。テスト専用の `/__test/*` 経路とDiscord stubは本番bundleに入らない。
+`test/worker.ts` は **テスト専用エントリ**。Wrangler CLIのentry引数で回帰テスト時だけ指定する。example、CI設定、deploy scriptのmainは `src/index.ts`。非追跡の実 `wrangler.toml` はこの移行で自動更新しないため、deploy前に `main` を手動で `src/index.ts` へ変更する（下記）。テスト専用の `/__test/*` 経路とDiscord stubは本番bundleに入らない。
 
 Discordへのfetchだけをstubにし、予期しない外部リクエストは拒否する。OAuth requestの形、署名/期限切れ/改ざん、scope/state/cookie、上流エラー、role判定とキャッシュを確認する。Request/Crypto/Response/D1/R2は本物のローカルworkerd実装を使い、Node版をWorker版へcastしたfakeは使わない。
 
