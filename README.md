@@ -77,13 +77,8 @@ Node.js 22.18.0 以上が必要です。TypeScript は Node 標準の型スト�
 ```bash
 cd recorder
 pnpm install --frozen-lockfile
-pnpm run typecheck
-pnpm test                 # ffmpeg 必須。Discord / OpenAI はテスト内の fake を使用
-```
-
-```bash
-cd recorder
-pnpm install
+pnpm run typecheck     # 型チェック（実行には不要。変更時に確認する）
+pnpm test              # ffmpeg 必須。Discord / OpenAI はテスト内の fake を使用
 cp .env.example .env   # 値を埋める
 pnpm run register      # スラッシュコマンドをDiscordへ登録
 pnpm run start         # Bot起動

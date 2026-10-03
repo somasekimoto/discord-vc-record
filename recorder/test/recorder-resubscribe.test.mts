@@ -1,5 +1,5 @@
 /**
- * recorder-resubscribe.test.mjs — ストリームエラー後の再購読(録音継続)の回帰テスト
+ * recorder-resubscribe.test.mts — ストリームエラー後の再購読(録音継続)の回帰テスト
  *
  * 背景: @discordjs/voice は受信パケットの復号失敗(DAVE のエポック遷移中など)で
  * 購読ストリームを destroy(error) する。修正前の recorder は activeStreams から
@@ -49,7 +49,6 @@ test('ストリームエラー後、次の speaking start で再購読され録�
   session._onSpeakingStart('user1');
   assert.equal(subscribed.length, 1, '最初の speaking start で購読される');
   const st = session.trackStates.get('user1');
-  assert.ok(st);
   assert.ok(st, 'トラック state が作られる');
 
   // DAVE 復号失敗 → ライブラリが stream.destroy(error) するのを再現
