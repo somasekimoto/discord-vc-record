@@ -3,9 +3,9 @@
  *
  * アップロード成功時だけ中間物の PCM を消し、失敗時は残すことを確認する。
  * PCM を消せるのはアップロード後に参照されないからで、失敗時に消すと
- * reupload.js での復旧手段まで失う(wav を作り直せない)。その境界を守る。
+ * reupload.ts での復旧手段まで失う(wav を作り直せない)。その境界を守る。
  *
- * upload.js をモックせず、スタブ HTTP サーバを立てて実際の /ingest 経路を通す。
+ * upload.ts をモックせず、スタブ HTTP サーバを立てて実際の /ingest 経路を通す。
  * ffmpeg が必要(wav 化・切り出しが実行される)。
  */
 import test from 'node:test';
@@ -92,7 +92,7 @@ test('アップロード成功時は pcm を削除し、wav と transcript は�
   assert.equal(await exists(files.jsonPath), true, 'transcript must survive');
 });
 
-test('アップロード失敗時は pcm を残す(reupload.js での復旧手段を壊さない)', async (t) => {
+test('アップロード失敗時は pcm を残す(reupload.ts での復旧手段を壊さない)', async (t) => {
   const { summary, tracks, cleanup } = await makeSession(oneUser);
   t.after(cleanup);
 

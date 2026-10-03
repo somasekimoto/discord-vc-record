@@ -1,5 +1,5 @@
 /**
- * upload.js — 文字起こし結果を web(Cloudflare Worker)の /ingest へ送る
+ * upload.ts — 文字起こし結果を web(Cloudflare Worker)の /ingest へ送る
  *
  * INGEST_SECRET の Bearer で認証。WEB_BASE_URL が未設定ならスキップ(ローカル保存のみ)。
  *

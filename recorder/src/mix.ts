@@ -1,5 +1,5 @@
 /**
- * mix.js — 会話全体を1本で聴けるミックス音声の生成
+ * mix.ts — 会話全体を1本で聴けるミックス音声の生成
  *
  * 話者別 PCM は発話部分だけが連結されて無音が潰れているため、そのまま重ねても
  * 会話にならない。recorder が記録した発話区間(実時刻+PCM内バイト位置)を使い、
@@ -12,12 +12,13 @@
  */
 import type { FileHandle } from 'node:fs/promises';
 import type { SessionSnapshot, Track } from './types.ts';
-type MixTrack = Pick<Track, 'pcmPath' | 'bytes' | 'utterances'>;
-type MixSummary = Pick<SessionSnapshot, 'startedAt' | 'endedAt'>;
-export type MixPlan = NonNullable<ReturnType<typeof computeMixPlan>>;
 import { open, rm } from 'node:fs/promises';
 import { PCM_FORMAT } from './recorder.ts';
 import { ffmpeg } from './ffmpeg.ts';
+
+type MixTrack = Pick<Track, 'pcmPath' | 'bytes' | 'utterances'>;
+type MixSummary = Pick<SessionSnapshot, 'startedAt' | 'endedAt'>;
+export type MixPlan = NonNullable<ReturnType<typeof computeMixPlan>>;
 
 const BYTES_PER_SEC = PCM_FORMAT.sampleRate * PCM_FORMAT.channels * (PCM_FORMAT.bitsPerSample / 8);
 // s16le stereo の1サンプルフレーム。全オフセットをこの境界に揃える

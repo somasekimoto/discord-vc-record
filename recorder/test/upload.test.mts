@@ -4,10 +4,14 @@ import { createServer } from 'node:http';
 import { mkdtemp, writeFile, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { uploadToWeb } from '../src/upload.ts';
 import type { Minutes, UploadFiles } from '../src/types.ts';
+
+// cwd に依存せず、どこから node --test しても同じ entry を起動する。
+const REUPLOAD_ENTRY = fileURLToPath(new URL('../src/reupload.ts', import.meta.url));
 
 async function fixture(statuses: Record<string, number[]> = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'upload-test-'));
@@ -126,7 +130,7 @@ test('reupload: utterances のない旧保存 JSON と既存音声から復旧�
   await writeFile(join(sessionDir, 'transcript.md'), '# 旧録音');
   await writeFile(join(sessionDir, '111.wav'), Buffer.from([1, 2, 3, 4]));
   // mixed.m4a が無い旧保存データも復旧できる。
-  const { stdout } = await promisify(execFile)(process.execPath, ['src/reupload.ts', f.minutes.sessionId], {
+  const { stdout } = await promisify(execFile)(process.execPath, [REUPLOAD_ENTRY, f.minutes.sessionId], {
     env: { ...process.env, RECORDINGS_DIR: f.dir },
   });
   assert.match(stdout, /"uploaded": true/);

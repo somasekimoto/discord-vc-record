@@ -70,7 +70,7 @@ test('STT が失敗しても時系列の議事録が生成される', async () =
 
     // 会話全体のミックス音声も生成される
     assert.ok(files.mixedPath);
-    assert.ok(files.mixedPath?.endsWith('mixed.m4a'));
+    assert.ok(files.mixedPath.endsWith('mixed.m4a'));
     assert.ok((await stat(files.mixedPath)).size > 0, 'mixed.m4a が空');
 
     // WEB_BASE_URL 未設定なので upload はスキップ

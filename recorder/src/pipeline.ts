@@ -1,5 +1,5 @@
 /**
- * pipeline.js — 録音終了後のまとめ処理
+ * pipeline.ts — 録音終了後のまとめ処理
  *
  * 流れ:
  *   1. 各話者の PCM を ffmpeg で wav 化（STT に渡せる形式）

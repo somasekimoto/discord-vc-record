@@ -1,5 +1,5 @@
 /**
- * mix.js のテスト:
+ * mix.ts のテスト:
  *  - computeMixPlan(純粋関数): 配置・クランプ・フレーム境界揃え
  *  - writeMixedPcm: 実時間軸への配置と同時発話の合算(クリップ含む)を生PCMで検証
  *  - buildMixedAudio: m4a 生成まで通しで確認(ffmpeg 必須)

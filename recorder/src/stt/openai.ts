@@ -1,5 +1,5 @@
 /**
- * stt/openai.js — OpenAI 文字起こし実装（既定プロバイダ）
+ * stt/openai.ts — OpenAI 文字起こし実装（既定プロバイダ）
  *
  * モデル: gpt-4o-transcribe（日本語精度が高い）。
  * 制約: response_format は json/text のみ（verbose_json=セグメント非対応）、
