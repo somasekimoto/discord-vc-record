@@ -47,8 +47,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # apt / node-gyp(@discordjs/opus) のレイヤを GHA cache で再利用する。load で probe 用にローカルへ残す。
+      - uses: docker/setup-buildx-action@v3
       - name: Build production image
-        run: docker build -t discord-vc-recorder:ts-check recorder
+        uses: docker/build-push-action@v6
+        with:
+          context: recorder
+          load: true
+          tags: discord-vc-recorder:ts-check
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - name: Probe production modules and native Opus
         run: |
           docker run --rm discord-vc-recorder:ts-check node --input-type=module -e '
