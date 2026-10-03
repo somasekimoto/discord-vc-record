@@ -10,10 +10,11 @@ on:
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    # 本番は Cloudflare Workers(workerd)で Node を使わない。Node は wrangler / テスト / smoke クライアント用なので、
+    # package.json engines の下限 1 本で検証する(本番に合わせる対象は wrangler の compatibility_date/flags)。
     strategy:
-      fail-fast: false
       matrix:
-        node: ['22.18.0', '22', '24']
+        node: ['22.18.0']
     defaults:
       run:
         working-directory: web
