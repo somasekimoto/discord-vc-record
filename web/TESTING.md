@@ -12,7 +12,7 @@ pnpm test
 pnpm exec wrangler deploy --config wrangler.ci.toml --dry-run
 ```
 
-`pnpm test` は `node:test` が空きポートにWrangler子プロセスを起動し、実行ごとの `TEST_RUN_ID` をreadinessで照合してからHTTP回帰を実行する。D1スキーマは `schema.sql` から専用の一時保存先へ適用し、R2も同じ保存先を使う。終了時にプロセスグループを停止して自分の一時ディレクトリだけを破棄する。既存 `.wrangler/state` や並列実行中のfixtureには触れない。smokeは別途指定したローカルdevの保存先を使う。
+`pnpm test` は `node:test` が空きポートにWrangler子プロセスを起動し、実行ごとの `TEST_RUN_ID` をreadinessで照合してからHTTP回帰を実行する。D1スキーマは `schema.sql` から専用の一時保存先へ適用し、R2も同じ保存先を使う。終了時にプロセスグループを停止して自分の一時ディレクトリだけを破棄する。既存 `.wrangler/state` や並列実行中のfixtureには触れない。smokeは `wrangler dev` 既定の保存先（`.wrangler/state`）を使う。
 
 追加の取り込み検証:
 
@@ -38,7 +38,7 @@ SMOKE_BIG=1 node test/smoke.mts
 
 ## テストの境界
 
-`test/worker.ts` は **テスト専用エントリ**。Wrangler CLIのentry引数で回帰テスト時だけ指定する。example、CI設定、deploy scriptのmainは `src/index.ts`。非追跡の実 `wrangler.toml` はこの移行で自動更新しないため、deploy前に `main` を手動で `src/index.ts` へ変更する（下記）。テスト専用の `/__test/*` 経路とDiscord stubは本番bundleに入らない。
+`test/worker.ts` は **テスト専用エントリ**。Wrangler CLIのentry引数で回帰テスト時だけ指定する。example、CI設定、deploy scriptのmainは `src/index.ts`。非追跡の実 `wrangler.toml` は下記のとおり手動更新が必要。テスト専用の `/__test/*` 経路とDiscord stubは本番bundleに入らない。
 
 Discordへのfetchだけをstubにし、予期しない外部リクエストは拒否する。OAuth requestの形、署名/期限切れ/改ざん、scope/state/cookie、上流エラー、role判定とキャッシュを確認する。Request/Crypto/Response/D1/R2は本物のローカルworkerd実装を使い、Node版をWorker版へcastしたfakeは使わない。
 
