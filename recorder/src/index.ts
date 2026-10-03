@@ -1,8 +1,8 @@
 /**
- * index.js — 録音Bot エントリポイント。
+ * index.ts — 録音Bot エントリポイント。
  *
  * Discord Gateway に接続し、スラッシュコマンド(/record, /setup)を処理する。
- * 録音は SessionManager(recorder.js)へ委譲。
+ * 録音は SessionManager(recorder.ts)へ委譲。
  * /record stop 後の文字起こし・保管は pipeline.ts(Phase 2)へ委譲する。
  */
 import type { ChatInputCommandInteraction, SendableChannels } from 'discord.js';

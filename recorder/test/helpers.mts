@@ -26,10 +26,8 @@ export function tonePcm(seconds: number, freq = 440) {
 
 /**
  * 擬似セッションを一時ディレクトリに組み立てる。
- * @param {Array<{userId, displayName, pcmSeconds, utterances}>} users
- *   utterances の byteStart/byteEnd は BYTES_PER_SEC 換算の絶対バイト、
+ * @param users utterances の byteStart/byteEnd は BYTES_PER_SEC 換算の絶対バイト、
  *   startedAt/endedAt は sessionStart(t0) からの相対 ms で指定する。
- * @returns {{summary, tracks, t0, cleanup}}
  */
 export async function makeSession(users: { userId: string; displayName: string; pcmSeconds: number; freq?: number; utterances?: { startMs: number; endMs: number; byteStart: number; byteEnd: number }[] }[], { durationMs = 60_000 } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'pipeline-test-'));

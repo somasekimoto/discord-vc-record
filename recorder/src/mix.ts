@@ -34,10 +34,7 @@ const msToBytes = (ms: number) => alignDown(Math.max(0, Math.round((ms / 1000) *
 /**
  * ミックスの配置計画を作る(純粋関数)。
  *
- * @param {{startedAt:number, endedAt:number}} summary
- * @param {Array<{pcmPath:string, bytes:number, utterances:Array}>} tracks
- * @returns {{totalBytes:number, tracks:Array<{srcPath:string, segments:Array<{srcStart:number, length:number, dstOffset:number}>}>}|null}
- *   配置できる発話が1つも無ければ null(旧録音など utterances 未記録のトラックは除外)
+ * @returns 配置できる発話が1つも無ければ null(旧録音など utterances 未記録のトラックは除外)
  */
 export function computeMixPlan(summary: MixSummary, tracks: MixTrack[]) {
   let totalBytes = msToBytes(Number(summary.endedAt ?? summary.startedAt) - Number(summary.startedAt));
@@ -111,7 +108,7 @@ export async function writeMixedPcm(plan: MixPlan, outPath: string) {
 /**
  * セッション全体のミックス音声(m4a)を生成する。
  *
- * @returns {Promise<{path:string, durationSec:number}|null>} 配置できる発話が無ければ null
+ * @returns 配置できる発話が無ければ null
  */
 export async function buildMixedAudio(summary: MixSummary, tracks: MixTrack[], outPath: string) {
   const plan = computeMixPlan(summary, tracks);

@@ -34,9 +34,7 @@ export const LOW_SPACE_THRESHOLD_BYTES = 1.5 * 1024 ** 3;
  * 録音開始はブロックしない。会議を録れない方が損失が大きく、
  * 空きが少なくても録り切れる場合があるため、判断はユーザーに委ねる。
  *
- * @param {string} dir 調べる対象(録音ルート)
- * @param {number} [threshold]
- * @returns {Promise<{ok:boolean, freeBytes:number|null, warning:string|null}>}
+ * @param dir 調べる対象(録音ルート)
  */
 export async function checkDiskSpace(dir: string, threshold = LOW_SPACE_THRESHOLD_BYTES) {
   let freeBytes;
@@ -76,8 +74,7 @@ export function parseRetentionMs(raw: string | null | undefined) {
  * (reupload.ts が使うのは transcript.json / <userId>.wav / mixed.m4a のみ)。
  * よってアップロード成功後に消しても復旧手段を壊さない。
  *
- * @param {string} dir セッションディレクトリ
- * @returns {Promise<{deleted:number, freedBytes:number}>}
+ * @param dir セッションディレクトリ
  */
 export async function deletePcmFiles(dir: string) {
   let deleted = 0;
@@ -116,12 +113,10 @@ export async function deletePcmFiles(dir: string) {
  * 完了マーカーを持たない)ため、「保持期間を過ぎたものは復旧を諦める」
  * という割り切りで消す。期間内であれば reupload.ts で復旧できる。
  *
- * @param {string} baseDir 録音ルート
- * @param {object} [opts]
- * @param {number} [opts.retentionMs] 保持期間(0 で無効)
- * @param {() => number} [opts.now] テスト用の時刻取得
- * @param {Set<string>|string[]} [opts.keep] 進行中などで消してはいけないセッションID
- * @returns {Promise<{deleted:string[], freedBytes:number}>}
+ * @param baseDir 録音ルート
+ * @param [opts.retentionMs] 保持期間(0 で無効)
+ * @param [opts.now] テスト用の時刻取得
+ * @param [opts.keep] 進行中などで消してはいけないセッションID
  */
 export async function purgeOldSessions(baseDir: string, { retentionMs, now = Date.now, keep = [] }: { retentionMs?: number; now?: () => number; keep?: Set<string> | string[] } = {}) {
   const deleted: string[] = [];

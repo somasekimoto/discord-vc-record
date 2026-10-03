@@ -1,5 +1,5 @@
 /**
- * join-prompt.js — VC参加時の録音開始リマインダー。
+ * join-prompt.ts — VC参加時の録音開始リマインダー。
  *
  * RECORD_PROMPT_CHANNEL_IDS で指定した VC に人が入ったとき、
  * その VC のテキストチャット(Text in Voice)へ録音開始を促すメッセージを投稿する。
@@ -17,11 +17,11 @@ import { MessageFlags } from 'discord.js';
 
 export const DEFAULT_COOLDOWN_MS = 5 * 60 * 1000;
 
-/** 開始ボタンの customId プレフィックス。index.js の interaction 分岐と対応する。 */
+/** 開始ボタンの customId プレフィックス。index.ts の interaction 分岐と対応する。 */
 export const START_BUTTON_PREFIX = 'recstart';
 
 /**
- * 開始ボタン行を組む(auto-stop.js と同じく raw component で表現)。
+ * 開始ボタン行を組む(auto-stop.ts と同じく raw component で表現)。
  * customId に対象 VC の channelId を埋め、押下時に「どの VC を録音するか」を
  * ボタン側で一意に決める(押した人が別の VC にいる場合を弾くため)。
  */
@@ -54,11 +54,8 @@ export class JoinPromptNotifier {
   declare now: () => number;
   declare lastPromptedAt: Map<string, number>;
   /**
-   * @param {object} opts
-   * @param {Set<string>|string[]} opts.channelIds 通知対象の VC ID
-   * @param {import('./recorder.ts').SessionManager} opts.sessions
-   * @param {number} [opts.cooldownMs]
-   * @param {() => number} [opts.now] テスト用の時刻取得
+   * @param opts.channelIds 通知対象の VC ID
+   * @param [opts.now] テスト用の時刻取得
    */
   constructor({ channelIds, sessions, cooldownMs = DEFAULT_COOLDOWN_MS, now = Date.now }: JoinPromptOptions) {
     this.channelIds = new Set(channelIds);
@@ -66,7 +63,7 @@ export class JoinPromptNotifier {
     this.cooldownMs = cooldownMs;
     this.now = now;
     /**
-     * @type {Map<string, number>} channelId -> 最終通知時刻
+     * channelId -> 最終通知時刻
      * インメモリ保持。再起動で消えるが、recorder は単一インスタンス運用
      * (fly deploy --ha=false) が前提なのでプロセス間共有は不要。
      */
@@ -75,7 +72,7 @@ export class JoinPromptNotifier {
 
   /**
    * voiceStateUpdate から呼ぶ。通知すべきなら VC チャットへ投稿する。
-   * @returns {Promise<boolean>} 投稿できたかどうか
+   * @returns 投稿できたかどうか
    */
   async handleVoiceState(oldState: VoiceStatePort, newState: VoiceStatePort) {
     const channelId = newState.channelId;
@@ -136,11 +133,10 @@ export class JoinPromptNotifier {
  * 古いボタンが押されても安全に扱える。どの分岐でも必ず何か応答し、
  * 「インタラクション失敗」表示を出さない。
  *
- * @param {object} interaction ボタン interaction
- * @param {object} deps
- * @param {{get:(guildId:string)=>object|undefined}} deps.sessions SessionManager
- * @param {(opts:object)=>Promise<object>} deps.startSession 録音開始(コマンド経路と共通)
- * @param {() => Promise<{warning:string|null}>} [deps.checkDisk] 空き容量の警告(任意)
+ * @param interaction ボタン interaction
+ * @param deps.sessions SessionManager
+ * @param deps.startSession 録音開始(コマンド経路と共通)
+ * @param [deps.checkDisk] 空き容量の警告(任意)
  */
 export async function handleStartButton(interaction: StartButtonPort, { sessions, startSession, checkDisk }: { sessions: { get(guildId: string): unknown }; startSession(opts: StartOptions): Promise<{ id: string }>; checkDisk?: () => Promise<{ warning?: string | null }> }) {
   const channelId = interaction.customId.split(':')[1];
@@ -202,8 +198,6 @@ export async function handleStartButton(interaction: StartButtonPort, { sessions
 
 /**
  * 環境変数(カンマ区切り)を VC ID の配列にパースする。
- * @param {string|undefined} raw
- * @returns {string[]}
  */
 export function parsePromptChannelIds(raw: string | undefined) {
   if (!raw) return [];

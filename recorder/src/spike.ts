@@ -11,7 +11,7 @@
  *   3. VC に入って数秒喋る → Ctrl+C で停止
  *   4. recordings/spike-<userId>.wav が再生でき、無音でなければ成功
  *
- * 注意: これは検証用の使い捨てスクリプト。本実装は recorder.js 側で行う。
+ * 注意: これは検証用の使い捨てスクリプト。本実装は recorder.ts 側で行う。
  */
 import { errorMessage } from './types.ts';
 import 'dotenv/config';

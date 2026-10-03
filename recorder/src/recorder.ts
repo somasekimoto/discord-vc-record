@@ -1,5 +1,5 @@
 /**
- * recorder.js — 録音セッション管理と話者別トラック録音
+ * recorder.ts — 録音セッション管理と話者別トラック録音
  *
  * Phase 0 のスパイクで実証した「speaking 検知 → per-user subscribe → opus decode → PCM 追記」
  * パターンを、複数話者・セッション・participants 記録に拡張したもの。
@@ -78,14 +78,11 @@ export class RecordingSession {
   declare pendingPipelines: Set<Promise<void>>;
   declare trackStates: Map<string, TrackState>;
   /**
-   * @param {object} opts
-   * @param {import('discord.js').Client} opts.client
-   * @param {string} opts.guildId
-   * @param {string} opts.channelId       録音対象の VC
-   * @param {string} opts.startedByUserId  /record start を打った人
-   * @param {string} opts.baseDir          録音ファイルの保存先ルート (例: ./recordings)
-   * @param {string} [opts.notifyChannelId] /rec start が打たれたテキストチャンネル(自動停止の通知先)
-   * @param {(id:string)=>string} [opts.resolveName] userId -> 表示名
+   * @param opts.channelId 録音対象の VC
+   * @param opts.startedByUserId /record start を打った人
+   * @param opts.baseDir 録音ファイルの保存先ルート (例: ./recordings)
+   * @param [opts.notifyChannelId] /rec start が打たれたテキストチャンネル(自動停止の通知先)
+   * @param [opts.resolveName] userId -> 表示名
    */
   constructor({ client, guildId, channelId, startedByUserId, baseDir, notifyChannelId, resolveName }: RecordingOptions) {
     this.client = client;
@@ -100,9 +97,7 @@ export class RecordingSession {
     this.id = `${guildId}-${channelId}-${process.hrtime.bigint().toString(36)}`;
     this.dir = join(baseDir, this.id);
 
-    /** @type {VoiceConnection|null} */
     this.connection = null;
-    /** @type {VoiceReceiver|null} */
     this.receiver = null;
 
     this.channelName = null; // start() で VC 名を記録
@@ -434,7 +429,7 @@ export class SessionManager {
   constructor({ client, baseDir }: Pick<RecordingOptions, 'client' | 'baseDir'>) {
     this.client = client;
     this.baseDir = baseDir;
-    /** @type {Map<string, RecordingSession>} guildId -> session */
+    /** guildId -> session */
     this.byGuild = new Map();
   }
 

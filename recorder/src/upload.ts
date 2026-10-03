@@ -138,9 +138,7 @@ async function uploadAudio(base: string, secret: string, sessionId: string, { pa
 }
 
 /**
- * @param {object} minutes  pipeline が生成した構造化JSON(transcript.json 相当)
- * @param {{mdPath:string, jsonPath:string, wavPaths:string[], mixedPath?:string|null}} files
- * @returns {Promise<{uploaded:boolean, sessionId:string, viewUrl?:string, reason?:string}>}
+ * @param minutes pipeline が生成した構造化JSON(transcript.json 相当)
  */
 export async function uploadToWeb(minutes: Minutes, files: UploadFiles): Promise<UploadResult> {
   const base = process.env.WEB_BASE_URL;

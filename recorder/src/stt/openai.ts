@@ -52,8 +52,7 @@ async function transcribeOne(filePath: string, language: string) {
 }
 
 /**
- * @param {string} audioPath  wav/mp3 等
- * @param {{language?: string}} opts
+ * @param audioPath wav/mp3 等
  */
 export async function transcribe(audioPath: string, { language = 'ja' }: TranscribeOptions = {}): Promise<Transcription> {
   const { size } = await stat(audioPath);

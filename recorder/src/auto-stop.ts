@@ -1,5 +1,5 @@
 /**
- * auto-stop.js — VC 無人時の録音自動停止。
+ * auto-stop.ts — VC 無人時の録音自動停止。
  *
  * 録音中の VC から人間の参加者が全員いなくなったら、/rec start が打たれた
  * テキストチャンネルへボタン付きメッセージを投稿し、猶予時間(既定60秒)の
@@ -14,7 +14,7 @@
  *  - extended: N分後にまだ無人なら新しいプロンプトを再送して countdown へ戻る
  *      (何度でも延長できるが、放置された録音は最終的に必ず止まる)
  *
- * 無人判定は join-prompt.js と同じく voiceStates ベースの best-effort。
+ * 無人判定は join-prompt.ts と同じく voiceStates ベースの best-effort。
  * member 未解決の在室者は人間扱いし、会議中の誤停止より停止抑制に倒す。
  * タイマーはインメモリ保持(recorder は単一インスタンス運用が前提)。
  */
@@ -68,13 +68,12 @@ export class AutoStopController {
   declare timers: NonNullable<AutoStopOptions['timers']>;
   declare states: Map<string, AutoStopState>;
   /**
-   * @param {object} opts
-   * @param {{get:(guildId:string)=>object|undefined}} opts.sessions SessionManager
-   * @param {(guildId:string, reason:string)=>Promise<void>} opts.stop 停止処理(冪等であること)
-   * @param {(channelId:string)=>Promise<{send:Function}>} opts.fetchChannel 通知チャンネル取得
-   * @param {(guildId:string)=>object|undefined} opts.getGuild タイマー発火時の無人再確認用
-   * @param {number} [opts.emptyDelayMs] 無人からの自動停止猶予
-   * @param {{setTimeout:Function, clearTimeout:Function}} [opts.timers] テスト用タイマー注入
+   * @param opts.sessions SessionManager
+   * @param opts.stop 停止処理(冪等であること)
+   * @param opts.fetchChannel 通知チャンネル取得
+   * @param opts.getGuild タイマー発火時の無人再確認用
+   * @param [opts.emptyDelayMs] 無人からの自動停止猶予
+   * @param [opts.timers] テスト用タイマー注入
    */
   constructor({ sessions, stop, fetchChannel, getGuild, emptyDelayMs = DEFAULT_EMPTY_DELAY_MS, timers }: AutoStopOptions) {
     this.sessions = sessions;
@@ -83,10 +82,7 @@ export class AutoStopController {
     this.getGuild = getGuild;
     this.emptyDelayMs = emptyDelayMs;
     this.timers = timers ?? { setTimeout: (callback, ms) => setTimeout(callback, ms), clearTimeout: (id) => clearTimeout(id ?? undefined) };
-    /**
-     * @type {Map<string, {sessionId:string, phase:'countdown'|'extended', timer:TimerHandle, message:object|null}>}
-     * guildId -> 進行中の無人確認状態
-     */
+    /** guildId -> 進行中の無人確認状態 */
     this.states = new Map();
   }
 
