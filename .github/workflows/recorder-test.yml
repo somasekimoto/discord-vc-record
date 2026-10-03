@@ -21,9 +21,11 @@ jobs:
         run: |
           prod=$(sed -nE 's/^FROM node:([0-9]+\.[0-9]+\.[0-9]+)-.*/\1/p' recorder/Dockerfile | head -n1)
           if [ -z "$prod" ]; then echo "recorder/Dockerfile の FROM から Node の版を読めない" >&2; exit 1; fi
-          echo "production Node: $prod"
-          # 22.18.0 は package.json engines の下限。本番の版と下限の両方で通ることを確かめる。
-          echo "matrix=[\"$prod\",\"22.18.0\"]" >> "$GITHUB_OUTPUT"
+          # 下限は package.json engines("node": ">=x.y.z")から読む。本番の版と下限の両方で通ることを確かめる。
+          min=$(jq -r '.engines.node' recorder/package.json | sed -nE 's/^>=([0-9]+\.[0-9]+\.[0-9]+)$/\1/p')
+          if [ -z "$min" ]; then echo "recorder/package.json の engines.node を >=x.y.z として読めない" >&2; exit 1; fi
+          echo "production Node: $prod / engines minimum: $min"
+          echo "matrix=$(jq -cn --arg a "$prod" --arg b "$min" '[$a,$b]|unique')" >> "$GITHUB_OUTPUT"
 
   test:
     needs: node-versions
