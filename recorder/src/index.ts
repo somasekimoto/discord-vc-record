@@ -1,24 +1,28 @@
 /**
- * index.js — 録音Bot エントリポイント。
+ * index.ts — 録音Bot エントリポイント。
  *
  * Discord Gateway に接続し、スラッシュコマンド(/record, /setup)を処理する。
- * 録音は SessionManager(recorder.js)へ委譲。
- * /record stop 後の文字起こし・保管は pipeline.js(Phase 2)へ委譲する。
+ * 録音は SessionManager(recorder.ts)へ委譲。
+ * /record stop 後の文字起こし・保管は pipeline.ts(Phase 2)へ委譲する。
  */
+import type { ChatInputCommandInteraction, SendableChannels } from 'discord.js';
+import type { SessionSnapshot, Track } from './types.ts';
+import type { StartOptions } from './ports.ts';
+import { errorMessage } from './types.ts';
 import 'dotenv/config';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Client, GatewayIntentBits, MessageFlags } from 'discord.js';
-import { SessionManager, NoActiveSessionError } from './recorder.js';
-import { process as runPipeline } from './pipeline.js';
+import { SessionManager, NoActiveSessionError } from './recorder.ts';
+import { process as runPipeline } from './pipeline.ts';
 import {
   JoinPromptNotifier,
   parsePromptChannelIds,
   handleStartButton,
   START_BUTTON_PREFIX,
-} from './join-prompt.js';
-import { AutoStopController, parseEmptyDelayMs } from './auto-stop.js';
-import { purgeOldSessions, parseRetentionMs, checkDiskSpace } from './cleanup.js';
+} from './join-prompt.ts';
+import { AutoStopController, parseEmptyDelayMs } from './auto-stop.ts';
+import { purgeOldSessions, parseRetentionMs, checkDiskSpace } from './cleanup.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RECORDINGS_DIR = process.env.RECORDINGS_DIR ?? join(__dirname, '..', 'recordings');
@@ -50,7 +54,11 @@ const autoStop = autoStopDelayMs > 0
   ? new AutoStopController({
       sessions,
       emptyDelayMs: autoStopDelayMs,
-      fetchChannel: (channelId) => client.channels.fetch(channelId),
+      fetchChannel: async (channelId) => {
+        const channel = await client.channels.fetch(channelId!);
+        if (!channel?.isSendable()) throw new TypeError('channel is not sendable');
+        return channel;
+      },
       getGuild: (guildId) => client.guilds.cache.get(guildId),
       stop: (guildId) => autoStopSession(guildId),
     })
@@ -60,7 +68,7 @@ if (autoStop) {
 }
 
 // 保持期間を過ぎた録音データを削除(RECORDINGS_RETENTION_DAYS=0 で無効)。
-// 正本は R2 側。ローカルは reupload.js での復旧用の控えなので期限付きでよい。
+// 正本は R2 側。ローカルは reupload.ts での復旧用の控えなので期限付きでよい。
 const retentionMs = parseRetentionMs(process.env.RECORDINGS_RETENTION_DAYS);
 const PURGE_INTERVAL_MS = 6 * 60 * 60 * 1000; // 長時間稼働で溜まるのを防ぐ定期実行
 if (retentionMs > 0) {
@@ -77,7 +85,7 @@ function purgeRecordings() {
 }
 
 client.once('clientReady', () => {
-  console.log(`[bot] logged in as ${client.user.tag}`);
+  console.log(`[bot] logged in as ${client.user!.tag}`);
   purgeRecordings();
   // unref: 掃除待ちでプロセスの終了を妨げない
   setInterval(purgeRecordings, PURGE_INTERVAL_MS).unref();
@@ -132,7 +140,7 @@ client.on('interactionCreate', async (interaction) => {
     }
   } catch (err) {
     console.error('[bot] interaction error:', err);
-    const msg = `エラー: ${err.message ?? err}`;
+    const msg = `エラー: ${errorMessage(err) ?? err}`;
     if (interaction.deferred || interaction.replied) {
       await interaction.editReply(msg).catch(() => {});
     } else {
@@ -141,14 +149,14 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-async function handleRecord(interaction) {
+async function handleRecord(interaction: ChatInputCommandInteraction) {
   const sub = interaction.options.getSubcommand();
-  const guildId = interaction.guildId;
+  const guildId = interaction.guildId!;
 
   if (sub === 'start') {
     // コマンドを打った人が今いる VC を録音対象にする
     const member = interaction.member;
-    const voiceChannelId = member?.voice?.channelId;
+    const voiceChannelId = member && 'voice' in member ? member.voice.channelId : undefined;
     if (!voiceChannelId) {
       await interaction.reply({
         content: '先にVCに参加してから /rec start を実行してください。',
@@ -179,9 +187,10 @@ async function handleRecord(interaction) {
     if (!session) {
       await interaction.reply({ content: '現在このサーバーで録音は行われていません。', flags: MessageFlags.Ephemeral });
     } else {
-      const mins = ((Date.now() - session.startedAt) / 60000).toFixed(1);
+      // start() 完了前(VC 接続中)は startedAt が未確定。0 起点の巨大な経過時間を出さない。
+      const elapsed = session.startedAt == null ? '開始処理中' : `${((Date.now() - session.startedAt) / 60000).toFixed(1)}分経過`;
       await interaction.reply({
-        content: `🔴 録音中（${mins}分経過、参加者 ${session.participants.size}名）`,
+        content: `🔴 録音中（${elapsed}、参加者 ${session.participants.size}名）`,
         flags: MessageFlags.Ephemeral,
       });
     }
@@ -200,7 +209,7 @@ async function handleRecord(interaction) {
     }
     const { summary, tracks } = stopped;
     await interaction.editReply(formatStopReport(tracks));
-    if (tracks.length > 0) announcePipelineResult(summary, tracks, interaction.channel);
+    if (tracks.length > 0) announcePipelineResult(summary, tracks, interaction.channel?.isSendable() ? interaction.channel : null);
     return;
   }
 }
@@ -209,9 +218,9 @@ async function handleRecord(interaction) {
  * 録音開始を行う。/rec start とボタンの両経路から呼ぶ共通処理。
  * 既に録音中の場合は SessionManager.start が throw する(二重開始の排他)。
  */
-async function startSession({ guildId, channelId, startedByUserId, notifyChannelId }) {
+async function startSession({ guildId, channelId, startedByUserId, notifyChannelId }: StartOptions) {
   const guild = client.guilds.cache.get(guildId);
-  const resolveName = (id) => guild?.members?.cache.get(id)?.displayName ?? id;
+  const resolveName = (id: string) => guild?.members?.cache.get(id)?.displayName ?? id;
   return await sessions.start({
     guildId,
     channelId,
@@ -224,10 +233,10 @@ async function startSession({ guildId, channelId, startedByUserId, notifyChannel
 /**
  * 録音停止を行う。進行中の録音がなければ null(停止経路の競合で後着になった場合を含む)。
  * session.stop 自体の失敗はそのまま投げ、呼び出し元でユーザーへ表面化させる。
- * 失敗時も PCM はディスクに残るが、wav/transcript 生成前のため reupload.js では
+ * 失敗時も PCM はディスクに残るが、wav/transcript 生成前のため reupload.ts では
  * 復旧できない(手動対応)。
  */
-async function stopSessionSafe(guildId) {
+async function stopSessionSafe(guildId: string) {
   if (!sessions.get(guildId)) return null;
   try {
     return await sessions.stop(guildId);
@@ -240,10 +249,12 @@ async function stopSessionSafe(guildId) {
 }
 
 /** 無人検知による自動停止(AutoStopController から呼ばれる)。通知は /rec start のチャンネルへ。 */
-async function autoStopSession(guildId) {
+async function autoStopSession(guildId: string) {
   const notifyChannelId = sessions.get(guildId)?.notifyChannelId;
-  const fetchNotifyChannel = async () =>
-    notifyChannelId ? await client.channels.fetch(notifyChannelId).catch(() => null) : null;
+  const fetchNotifyChannel = async () => {
+    const channel = notifyChannelId ? await client.channels.fetch(notifyChannelId).catch(() => null) : null;
+    return channel?.isSendable() ? channel : null;
+  };
 
   let stopped;
   try {
@@ -252,7 +263,7 @@ async function autoStopSession(guildId) {
     // interaction が無い経路なので、通知チャンネルへ失敗を表面化させる
     console.error(`[bot] auto-stop failed (guild=${guildId}):`, err);
     const channel = await fetchNotifyChannel();
-    await channel?.send(`⚠ 録音の自動停止に失敗しました: ${err.message}`).catch(() => {});
+    await channel?.send(`⚠ 録音の自動停止に失敗しました: ${errorMessage(err)}`).catch(() => {});
     return;
   }
   if (!stopped) return;
@@ -263,7 +274,7 @@ async function autoStopSession(guildId) {
   if (tracks.length > 0) announcePipelineResult(summary, tracks, channel);
 }
 
-function formatStopReport(tracks) {
+function formatStopReport(tracks: Track[]) {
   if (tracks.length === 0) return '⏹ 録音を終了しました。ただし音声が記録されませんでした。';
   const trackLines = tracks.map((t) => `・${t.displayName}: ${t.durationSec}秒`).join('\n');
   return (
@@ -276,7 +287,7 @@ function formatStopReport(tracks) {
  * 録音終了後にまとめて: wav 化 → STT → 議事録生成 → 保存。
  * 時間がかかるので非同期で進め、完了後にチャンネルへ投稿する。
  */
-function announcePipelineResult(summary, tracks, channel) {
+function announcePipelineResult(summary: SessionSnapshot, tracks: Track[], channel: SendableChannels | null) {
   runPipeline(summary, tracks)
     .then(async ({ minutes, files, upload }) => {
       const speakerCount = minutes.speakers.length;
@@ -293,12 +304,12 @@ function announcePipelineResult(summary, tracks, channel) {
     })
     .catch(async (err) => {
       console.error('[bot] pipeline error:', err);
-      await channel?.send(`⚠ 文字起こしに失敗しました: ${err.message}`).catch(() => {});
+      await channel?.send(`⚠ 文字起こしに失敗しました: ${errorMessage(err)}`).catch(() => {});
     });
 }
 
-async function handleSetup(interaction) {
-  const role = interaction.options.getRole('role');
+async function handleSetup(interaction: ChatInputCommandInteraction) {
+  const role = interaction.options.getRole('role', true);
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const base = process.env.WEB_BASE_URL;
@@ -331,7 +342,7 @@ async function shutdown() {
       await sessions.stop(guildId);
       console.log(`[bot] stopped session for guild ${guildId}`);
     } catch (err) {
-      console.error(`[bot] error stopping ${guildId}:`, err.message);
+      console.error(`[bot] error stopping ${guildId}:`, errorMessage(err));
     }
   }
   await client.destroy();

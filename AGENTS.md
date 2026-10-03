@@ -4,7 +4,7 @@
 
 This repository has two deployable Node.js ESM packages:
 
-- `recorder/`: Discord voice recorder bot for Fly.io. Runtime code is in `recorder/src/`, STT adapters are in `recorder/src/stt/`, and unit/integration tests are in `recorder/test/*.test.mjs`.
+- `recorder/`: Discord voice recorder bot for Fly.io. Runtime code is in `recorder/src/`, STT adapters are in `recorder/src/stt/`, and unit/integration tests are in `recorder/test/*.test.mts`.
 - `web/`: Cloudflare Worker WebUI, auth, ingest API, D1 access, and R2 delivery. Source lives in `web/src/`, the D1 schema is `web/schema.sql`, HTTP regression tests are `web/test/*.test.mts`, and the ingest smoke test is `web/test/smoke.mts`.
 - `scripts/`: local maintenance helpers, including `scripts/setup-hooks.sh` for gitleaks hooks.
 
@@ -12,10 +12,11 @@ Keep generated recordings, real `.env` files, `fly.toml`, and `wrangler.toml` ou
 
 ## Build, Test, and Development Commands
 
-- `cd recorder && pnpm install`: install recorder dependencies. Requires Node.js `>=22`.
+- `cd recorder && pnpm install`: install recorder dependencies. Requires Node.js `>=22.18.0`.
 - `cd recorder && pnpm run register`: register Discord slash commands.
 - `cd recorder && pnpm run start`: run the bot locally with `.env` configuration.
-- `cd recorder && pnpm test`: run Node's built-in test runner over `test/*.test.mjs`.
+- `cd recorder && pnpm run typecheck`: strict TypeScript checks for all recorder source and tests (no build output).
+- `cd recorder && pnpm test`: run Node's built-in test runner over `test/*.test.mts`.
 - `cd web && pnpm install`: install Wrangler for Worker development.
 - `cd web && pnpm run dev`: start `wrangler dev`.
 - `cd web && pnpm run deploy`: deploy the Worker.
@@ -25,7 +26,7 @@ Keep generated recordings, real `.env` files, `fly.toml`, and `wrangler.toml` ou
 
 ## Coding Style & Naming Conventions
 
-Use ESM `import`/`export`, two-space indentation, semicolons, and single quotes. Prefer small functions with explicit names such as `handleIngest`, `setRequiredRole`, or `parsePromptChannelIds`. Test files run by `pnpm test` use the `.test.mjs` suffix in `recorder/` and `.test.mts` in `web/`. Existing user-facing text is mostly Japanese; keep nearby language consistent.
+Use ESM `import`/`export`, two-space indentation, semicolons, and single quotes. Prefer small functions with explicit names such as `handleIngest`, `setRequiredRole`, or `parsePromptChannelIds`. Tests run by `pnpm test` use `.test.mts` in both `recorder/` and `web/`. TypeScript runs directly on Node: use explicit `.ts` / `.mts` import extensions and `import type`; do not use enums, parameter properties, or path aliases. Existing user-facing text is mostly Japanese; keep nearby language consistent.
 
 ## Testing Guidelines
 

@@ -3,6 +3,8 @@
  * 通知条件(対象VC・Bot除外・録音中スキップ・最初の入室者のみ・クールダウン)と、
  * 開始ボタン押下の分岐(VC未参加・別VC・録音中・正常系)を検証する。
  */
+import type { VoiceEntry, VoiceStatePort, PromptPayload, MessageEdit, StartOptions } from '../src/ports.ts';
+import type { InteractionReplyOptions } from 'discord.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -11,7 +13,7 @@ import {
   handleStartButton,
   buildStartComponents,
   START_BUTTON_PREFIX,
-} from '../src/join-prompt.js';
+} from '../src/join-prompt.ts';
 
 const TARGET = 'vc-1';
 const GUILD = 'guild-1';
@@ -26,7 +28,7 @@ function makeStates({
   bot = false,
   others = [],
   sent = [],
-} = {}) {
+}: { channelId?: string; oldChannelId?: string | null; bot?: boolean; others?: { bot?: boolean; resolved?: boolean }[]; sent?: PromptPayload[] } = {}) {
   const states = [
     { channelId, id: 'u0', member: { user: { bot } } }, // 入室者本人(イベント発火時点で在室扱い)
     ...others.map((o, i) => ({
@@ -36,21 +38,21 @@ function makeStates({
     })),
   ];
   const cache = {
-    filter: (fn) => {
+    filter: (fn: (state: VoiceEntry) => boolean) => {
       const arr = states.filter(fn);
       return { size: arr.length };
     },
   };
   const channel = {
     id: channelId,
-    send: async (msg) => {
+    send: async (msg: PromptPayload) => {
       sent.push(msg);
     },
   };
   const member = { user: { bot }, displayName: 'テスト太郎' };
   const guild = { id: GUILD, voiceStates: { cache } };
   const oldState = { channelId: oldChannelId, guild, member };
-  const newState = { channelId, channel, guild, member, id: 'u0' };
+  const newState: VoiceStatePort = { channelId, channel, guild, member, id: 'u0' };
   return { oldState, newState, sent };
 }
 
@@ -70,8 +72,8 @@ test('対象VCへの入室で録音開始を促すメッセージが投稿され
   const prompted = await notifier.handleVoiceState(oldState, newState);
   assert.equal(prompted, true);
   assert.equal(sent.length, 1);
-  assert.match(sent[0].content, /\/rec start/);
-  assert.match(sent[0].content, /テスト太郎/);
+  assert.match(sent[0].content!, /\/rec start/);
+  assert.match(sent[0].content!, /テスト太郎/);
 });
 
 test('プロンプトには対象VCを customId に埋めた開始ボタンが付く', async () => {
@@ -159,7 +161,7 @@ test('send 失敗時は false を返し、クールダウンが戻って次の�
   const nowValue = { t: 0 };
   const notifier = makeNotifier({ cooldownMs: 1000, nowValue });
   const first = makeStates();
-  first.newState.channel.send = async () => {
+  first.newState.channel!.send = async () => {
     throw new Error('missing permission');
   };
   assert.equal(await notifier.handleVoiceState(first.oldState, first.newState), false);
@@ -176,8 +178,8 @@ function makeStartInteraction({
   channelId = TARGET,
   userVoiceChannelId = TARGET,
   guildId = GUILD,
-} = {}) {
-  const calls = { replies: [], messageEdits: [], deferrals: 0 };
+}: { channelId?: string; userVoiceChannelId?: string | null; guildId?: string } = {}) {
+  const calls: { replies: InteractionReplyOptions[]; messageEdits: MessageEdit[]; deferrals: number } = { replies: [], messageEdits: [], deferrals: 0 };
   return {
     customId: `${START_BUTTON_PREFIX}:${channelId}`,
     guildId,
@@ -188,18 +190,18 @@ function makeStartInteraction({
     deferUpdate: async () => {
       calls.deferrals += 1;
     },
-    reply: async (p) => calls.replies.push(p),
-    message: { edit: async (p) => calls.messageEdits.push(p) },
+    reply: async (p: InteractionReplyOptions) => calls.replies.push(p),
+    message: { edit: async (p: MessageEdit) => calls.messageEdits.push(p) },
   };
 }
 
 /** startSession のフェイク。starts に呼び出し引数を記録する。 */
-function makeStartDeps({ recording = false, fail = null } = {}) {
-  const starts = [];
+function makeStartDeps({ recording = false, fail = null }: { recording?: boolean; fail?: string | null } = {}) {
+  const starts: StartOptions[] = [];
   return {
     starts,
     sessions: { get: () => (recording ? {} : undefined) },
-    startSession: async (opts) => {
+    startSession: async (opts: StartOptions) => {
       starts.push(opts);
       if (fail) throw new Error(fail);
       return { id: 'sess-1' };
@@ -219,8 +221,8 @@ test('開始ボタン: 押下で録音が開始され、メッセージが更新
   assert.equal(deps.starts[0].notifyChannelId, 'text-in-voice');
 
   const edit = interaction.calls.messageEdits[0];
-  assert.match(edit.content, /録音を開始しました/);
-  assert.match(edit.content, /sess-1/);
+  assert.match(edit.content!, /録音を開始しました/);
+  assert.match(edit.content!, /sess-1/);
   assert.deepEqual(edit.components, []);
 });
 
@@ -230,7 +232,7 @@ test('開始ボタン: VCに参加していない場合は開始せず ephemeral
   assert.equal(await handleStartButton(interaction, deps), false);
 
   assert.equal(deps.starts.length, 0);
-  assert.match(interaction.calls.replies[0].content, /先にVCに参加/);
+  assert.match(interaction.calls.replies[0].content!, /先にVCに参加/);
 });
 
 test('開始ボタン: 押した人が別のVCにいる場合は開始しない', async () => {
@@ -239,7 +241,7 @@ test('開始ボタン: 押した人が別のVCにいる場合は開始しない'
   assert.equal(await handleStartButton(interaction, deps), false);
 
   assert.equal(deps.starts.length, 0);
-  assert.match(interaction.calls.replies[0].content, /別のVC/);
+  assert.match(interaction.calls.replies[0].content!, /別のVC/);
 });
 
 test('開始ボタン: 既に録音中なら二重開始せず、古いボタンを剥がす', async () => {
@@ -248,7 +250,7 @@ test('開始ボタン: 既に録音中なら二重開始せず、古いボタン
   assert.equal(await handleStartButton(interaction, deps), false);
 
   assert.equal(deps.starts.length, 0);
-  assert.match(interaction.calls.replies[0].content, /既に録音中/);
+  assert.match(interaction.calls.replies[0].content!, /既に録音中/);
   assert.deepEqual(interaction.calls.messageEdits[0], { components: [] });
 });
 
@@ -257,8 +259,8 @@ test('開始ボタン: 開始処理が失敗したら ephemeral で表面化す�
   const interaction = makeStartInteraction();
   assert.equal(await handleStartButton(interaction, deps), false);
 
-  assert.match(interaction.calls.replies[0].content, /開始できませんでした/);
-  assert.match(interaction.calls.replies[0].content, /既に録音中です/);
+  assert.match(interaction.calls.replies[0].content!, /開始できませんでした/);
+  assert.match(interaction.calls.replies[0].content!, /既に録音中です/);
   assert.equal(interaction.calls.messageEdits.length, 0); // 成功時のみ書き換える
 });
 

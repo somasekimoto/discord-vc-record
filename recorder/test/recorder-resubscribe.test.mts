@@ -1,11 +1,12 @@
 /**
- * recorder-resubscribe.test.mjs — ストリームエラー後の再購読(録音継続)の回帰テスト
+ * recorder-resubscribe.test.mts — ストリームエラー後の再購読(録音継続)の回帰テスト
  *
  * 背景: @discordjs/voice は受信パケットの復号失敗(DAVE のエポック遷移中など)で
  * 購読ストリームを destroy(error) する。修正前の recorder は activeStreams から
  * ユーザーを削除しなかったため、一度ストリームが死んだユーザーはセッション終了まで
  * 二度と購読されず、「録音開始前から VC にいた人の声が丸ごと欠ける」不具合になった。
  */
+import { Client } from 'discord.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -13,13 +14,13 @@ import { PassThrough } from 'node:stream';
 import { mkdtemp, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { RecordingSession } from '../src/recorder.js';
+import { RecordingSession } from '../src/recorder.ts';
 
 /** VC 接続なしでセッションを録音中状態にし、receiver を偽物に差し替える。 */
 async function makeSession() {
   const baseDir = await mkdtemp(join(tmpdir(), 'rec-test-'));
   const session = new RecordingSession({
-    client: {},
+    client: new Client({ intents: [] }),
     guildId: 'g1',
     channelId: 'c1',
     startedByUserId: 'starter',
@@ -29,9 +30,8 @@ async function makeSession() {
   session.startedAt = Date.now();
   session.status = 'recording';
 
-  const subscribed = []; // subscribe が返した opus ストリーム(発生順)
-  const speaking = new EventEmitter();
-  speaking.users = new Map(); // SpeakingMap 互換: 現在発話中のユーザー
+  const subscribed: PassThrough[] = []; // subscribe が返した opus ストリーム(発生順)
+  const speaking = Object.assign(new EventEmitter(), { users: new Map<string, number>() }); // SpeakingMap 互換: 現在発話中のユーザー
   session.receiver = {
     speaking,
     subscribe: () => {
@@ -74,7 +74,7 @@ test('タイマー発火前に本物の speaking start が来ても二重購読�
   const { session, subscribed } = await makeSession();
 
   session._onSpeakingStart('user1');
-  session.receiver.speaking.users.set('user1', Date.now());
+  session.receiver!.speaking.users.set('user1', Date.now());
 
   subscribed[0].destroy(new Error('decrypt failed'));
   await Promise.allSettled([...session.pendingPipelines]);
@@ -95,6 +95,7 @@ test('発話途中でストリームが死んだら区間を閉じ、無記録�
 
   session._onSpeakingStart('user1');
   const st = session.trackStates.get('user1');
+  assert.ok(st);
   assert.ok(st.current, '発話区間が開いている');
 
   subscribed[0].destroy(new Error('decrypt failed'));
@@ -116,6 +117,7 @@ test('再購読時に st.bytes が実ファイルサイズへ再同期される'
 
   session._onSpeakingStart('user1');
   const st = session.trackStates.get('user1');
+  assert.ok(st);
 
   subscribed[0].destroy(new Error('decrypt failed'));
   await Promise.allSettled([...session.pendingPipelines]);
@@ -134,6 +136,7 @@ test('データが流れると連続失敗カウンタがリセットされる',
 
   session._onSpeakingStart('user1');
   const st = session.trackStates.get('user1');
+  assert.ok(st);
 
   subscribed[0].destroy(new Error('decrypt failed'));
   await Promise.allSettled([...session.pendingPipelines]);
@@ -155,7 +158,7 @@ test('本人が発話中のままストリームが死んだ場合は自動で�
 
   session._onSpeakingStart('user1');
   // SpeakingMap 上はまだ発話中(パケットは届き続けている)
-  session.receiver.speaking.users.set('user1', Date.now());
+  session.receiver!.speaking.users.set('user1', Date.now());
 
   subscribed[0].destroy(new Error('decrypt failed'));
   await Promise.allSettled([...session.pendingPipelines]);
@@ -172,7 +175,7 @@ test('stop 中のストリーム終了では再購読しない', async () => {
   const { session, subscribed } = await makeSession();
 
   session._onSpeakingStart('user1');
-  session.receiver.speaking.users.set('user1', Date.now());
+  session.receiver!.speaking.users.set('user1', Date.now());
 
   await session.stop();
   await new Promise((r) => setTimeout(r, 300));

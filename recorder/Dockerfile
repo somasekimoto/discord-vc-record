@@ -3,6 +3,9 @@
 # 文字起こしの ffmpeg も同梱する。
 FROM node:22-bookworm-slim
 
+# .ts を直接実行するため Node 22.18 以上が必須。キャッシュ済みの古い 22.x では起動時に落ちるので、build で止める。
+RUN node -e "const [a,b]=process.versions.node.split('.').map(Number); if (a<22||(a===22&&b<18)) { console.error('Node >=22.18.0 required, got '+process.version); process.exit(1); }"
+
 # ネイティブビルド用ツール + ffmpeg
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 make g++ ffmpeg ca-certificates \
@@ -31,4 +34,4 @@ ENV RECORDINGS_DIR=/data/recordings
 RUN mkdir -p /data/recordings
 
 # Bot は HTTP を待ち受けない（Gateway 常駐）。
-CMD ["node", "src/index.js"]
+CMD ["node", "src/index.ts"]

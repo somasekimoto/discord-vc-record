@@ -1,7 +1,7 @@
 /**
- * stt/index.js — STT プロバイダ抽象化レイヤー
+ * stt/index.ts — STT プロバイダ抽象化レイヤー
  *
- * pipeline.js は具体実装を知らず、この transcribe() だけを呼ぶ。
+ * pipeline.ts は具体実装を知らず、この transcribe() だけを呼ぶ。
  * プロバイダの追加 = ファイル1枚 + 下の分岐1行。
  *
  * 共通 interface:
@@ -11,10 +11,11 @@
  *     engine: string,
  *   }>
  */
-import { transcribe as openaiTranscribe } from './openai.js';
-import { transcribe as localTranscribe } from './local.js';
+import type { Transcribe, TranscribeOptions } from './types.ts';
+import { transcribe as openaiTranscribe } from './openai.ts';
+import { transcribe as localTranscribe } from './local.ts';
 
-const PROVIDERS = {
+const PROVIDERS: Record<string, Transcribe> = {
   openai: openaiTranscribe,
   local: localTranscribe,
 };
@@ -24,11 +25,10 @@ export function getProviderName() {
 }
 
 /**
- * @param {string} audioPath  文字起こし対象の音声ファイル(wav/mp3 等)
- * @param {object} [opts]
- * @param {string} [opts.language] ISO-639-1(例: 'ja')
+ * @param audioPath 文字起こし対象の音声ファイル(wav/mp3 等)
+ * @param [opts.language] ISO-639-1(例: 'ja')
  */
-export async function transcribe(audioPath, opts = {}) {
+export async function transcribe(audioPath: string, opts: TranscribeOptions = {}) {
   const name = getProviderName();
   const impl = PROVIDERS[name];
   if (!impl) {
