@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.read.outputs.matrix }}
+      min: ${{ steps.read.outputs.min }}
     steps:
       - uses: actions/checkout@v4
       - id: read
@@ -26,6 +27,7 @@ jobs:
           if [ -z "$min" ]; then echo "recorder/package.json の engines.node を >=x.y.z として読めない" >&2; exit 1; fi
           echo "production Node: $prod / engines minimum: $min"
           echo "matrix=$(jq -cn --arg a "$prod" --arg b "$min" '[$a,$b]|unique')" >> "$GITHUB_OUTPUT"
+          echo "min=$min" >> "$GITHUB_OUTPUT"
 
   test:
     needs: node-versions
@@ -55,9 +57,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       # --frozen-lockfile: lockfile と package.json がズレていたら CI を落とす
       - run: pnpm install --frozen-lockfile
-      # tsc の結果は実行 Node の版に依存しないので最低対応版で 1 回だけ。
+      # tsc の結果は実行 Node の版に依存しないので最低対応版で 1 回だけ（下限は engines から読んだ値）。
       - run: pnpm run typecheck
-        if: matrix.node == '22.18.0'
+        if: matrix.node == needs.node-versions.outputs.min
       - run: pnpm test
 
   # 本番と同じ --prod install + native stripping。Discord には接続しない。
