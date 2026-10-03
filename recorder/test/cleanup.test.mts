@@ -14,7 +14,7 @@ import {
   checkDiskSpace,
   formatBytes,
   DEFAULT_RETENTION_DAYS,
-} from '../src/cleanup.js';
+} from '../src/cleanup.ts';
 
 const DAY_MS = 86400_000;
 
@@ -23,7 +23,7 @@ async function makeBase() {
 }
 
 /** セッションディレクトリを作る。ageDays 指定で mtime を過去にずらす。 */
-async function makeSession(base, id, { files = ['u1.pcm', 'u1.wav'], ageDays = 0 } = {}) {
+async function makeSession(base: string, id: string, { files = ['u1.pcm', 'u1.wav'], ageDays = 0 } = {}) {
   const dir = join(base, id);
   await mkdir(dir, { recursive: true });
   for (const name of files) {
@@ -162,6 +162,7 @@ test('checkDiskSpace: 閾値を下回ると警告文を返す(録音はブロッ
   const base = await makeBase();
   const res = await checkDiskSpace(base, Number.MAX_SAFE_INTEGER);
   assert.equal(res.ok, false);
+  assert.ok(res.warning);
   assert.match(res.warning, /空きが少なく/);
 });
 

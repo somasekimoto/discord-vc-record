@@ -18,7 +18,7 @@ import {
   START_BUTTON_PREFIX,
 } from './join-prompt.js';
 import { AutoStopController, parseEmptyDelayMs } from './auto-stop.js';
-import { purgeOldSessions, parseRetentionMs, checkDiskSpace } from './cleanup.js';
+import { purgeOldSessions, parseRetentionMs, checkDiskSpace } from './cleanup.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RECORDINGS_DIR = process.env.RECORDINGS_DIR ?? join(__dirname, '..', 'recordings');
