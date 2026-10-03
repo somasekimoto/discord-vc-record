@@ -1,5 +1,28 @@
 # discord-vc-record
 
+Self-hosted Discord voice channel recorder with per-speaker tracks, transcription,
+and a web UI where only members holding a specific role can listen or download.
+
+- **Per-speaker recording** with `@discordjs/voice` — one track per participant, merged to WAV on stop
+- **DAVE / E2EE voice channels supported** via `@snazzah/davey`
+- **Transcription after each session** — OpenAI `gpt-4o-transcribe` by default; STT providers are pluggable (`recorder/src/stt/`)
+- **Role-gated web UI** — Discord OAuth2 login, access limited to members holding the role you configure with `/setup`
+- **Serverless where possible** — only the recorder is a long-running process (Fly.io); storage, DB, auth and delivery run on Cloudflare Workers / R2 / D1
+- **Battle-tested on long sessions** — the docs below record the OOM, disk-full and re-upload pitfalls we actually hit
+
+Compared with hosted bots such as Craig: your audio and transcripts never leave infrastructure you control,
+E2EE channels work, and transcription is built in rather than a paid add-on.
+
+<!-- TODO: screenshots — web UI recording list / transcript view / VC prompt with the「録音を開始」button -->
+
+Commands: `/rec start` · `/rec stop` · `/rec status` · `/setup role:<role>`
+
+Setup and operations docs are in Japanese below. Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Good first contributions: a `local` STT provider (faster-whisper) for `STT_PROVIDER=local`, an English translation of the docs,
+a Docker Compose setup for running the recorder locally.
+
+---
+
 Discord VCの会話を録音・日本語文字起こしし、WebUIで「録音されたサーバーで特定ロールを持つメンバーのみ」が閲覧・ダウンロードできるBot（MVP）。
 
 ## アーキテクチャ
