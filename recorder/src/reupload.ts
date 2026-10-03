@@ -1,5 +1,5 @@
 /**
- * reupload.js — ローカル保存済みセッションを web へ再アップロードする
+ * reupload.ts — ローカル保存済みセッションを web へ再アップロードする
  *
  * アップロードだけ失敗した(413等)セッションの復旧用。
  * セッションディレクトリの transcript.json と <userId>.wav(あれば mixed.m4a も)を

@@ -1,7 +1,7 @@
 /**
  * stt/index.ts — STT プロバイダ抽象化レイヤー
  *
- * pipeline.js は具体実装を知らず、この transcribe() だけを呼ぶ。
+ * pipeline.ts は具体実装を知らず、この transcribe() だけを呼ぶ。
  * プロバイダの追加 = ファイル1枚 + 下の分岐1行。
  *
  * 共通 interface:

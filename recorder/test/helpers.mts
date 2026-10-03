@@ -1,5 +1,5 @@
 /**
- * test/helpers.mjs — pipeline テスト用の共通ヘルパー
+ * test/helpers.mts — pipeline テスト用の共通ヘルパー
  *
  * 擬似セッション(トーンPCM + 発話区間メタデータ)を組み立てる。
  * PCM の中身は STT に依存しないテストでは長ささえ合っていればよい。

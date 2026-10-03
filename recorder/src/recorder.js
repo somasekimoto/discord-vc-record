@@ -5,7 +5,7 @@
  * パターンを、複数話者・セッション・participants 記録に拡張したもの。
  *
  * Phase 1 ではローカル FS への PCM 保存までを担当する。
- * R2/D1 アップロードと STT は pipeline.js (Phase 2) が録音終了後に処理する。
+ * R2/D1 アップロードと STT は pipeline.ts (Phase 2) が録音終了後に処理する。
  */
 import { createWriteStream, statSync } from 'node:fs';
 import { mkdir, readdir, stat } from 'node:fs/promises';

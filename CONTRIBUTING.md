@@ -60,7 +60,7 @@ This is the most self-contained contribution. `recorder/src/stt/local.ts` (faste
 3. Document any new environment variables in `recorder/.env.example` and the README table.
 4. Add a test under `recorder/test/` that exercises your provider with a fake backend.
 
-`pipeline.js` only calls `transcribe()`; it must not need to know which provider is active.
+`pipeline.ts` only calls `transcribe()`; it must not need to know which provider is active.
 
 ## Code style
 
