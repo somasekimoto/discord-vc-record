@@ -56,7 +56,8 @@ jobs:
           load: true
           tags: discord-vc-recorder:ts-check
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # fork PR の読み取り専用 token では cache 書き込みが拒否されうる。cache は任意なので失敗で落とさない。
+          cache-to: type=gha,mode=max,ignore-error=true
       - name: Probe production modules and native Opus
         run: |
           docker run --rm discord-vc-recorder:ts-check node --input-type=module -e '
