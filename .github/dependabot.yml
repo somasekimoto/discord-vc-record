@@ -1,0 +1,17 @@
+# recorder の本番 Node(Dockerfile の FROM)を固定版で運用するための更新 PR。
+# CI は Dockerfile の版でテストするので、PR がそのまま「新しい本番の版」の検証になる。
+version: 2
+updates:
+  - package-ecosystem: docker
+    directory: /recorder
+    schedule:
+      interval: weekly
+    # pnpm の minimumReleaseAge と同じく、公開から 7 日経った版だけを提案する。
+    cooldown:
+      default-days: 7
+    ignore:
+      # メジャー更新(22 -> 24 等)は engines・CI 下限の見直しを伴うので手動で行う。
+      - dependency-name: node
+        update-types: ['version-update:semver-major']
+    commit-message:
+      prefix: chore

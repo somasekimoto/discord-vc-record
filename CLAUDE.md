@@ -42,6 +42,7 @@ node test/smoke.mts                       # 別ターミナルで。SMOKE_BIG=1 
 ## アーキテクチャ上の重要な不変条件
 
 - **時系列の根拠は recorder の utterances のみ**。PCM は発話部分だけ連結され無音が潰れているため、STT のタイムスタンプから実時刻は復元できない。`pipeline.ts` は recorder が記録した発話区間（実時刻+PCM内バイト位置）で wav を切り出して区間単位で STT する（話者誤帰属も防ぐ）。
+- **本番 recorder の Node は `recorder/Dockerfile` の `FROM node:<x.y.z>-bookworm-slim` で完全固定**。CI はこの版を読んで本番と同じ版（+ engines 下限 22.18.0）でテストする。浮動タグ（`node:22` 等）に戻さない — 本番の版が CI 未検証のまま変わるため。更新は Dependabot の PR で行う。
 - **recorder は単一インスタンス必須**（`flyctl deploy --ha=false`）。複数だと同じ VC を二重録音する。メモリは 2GB 以上（wav 化+STT で 512MB を超え OOM する）。録音データは Fly ボリューム（`fly.toml` の `[mounts]`）に置く。
 - **ボリュームが満杯になると録音が開始できなくなる**（`ENOSPC`、stop 後の pipeline 途中でも起きて文字起こしを失う）。`cleanup.ts` が2段構えで削除する: アップロード成功直後に中間物の PCM を消し、`RECORDINGS_RETENTION_DAYS`（既定14日、`0` で無効）を過ぎたセッションを丸ごと消す。**アップロード失敗時は PCM を残す**（wav を作り直せないと `reupload.ts` での復旧手段まで失うため）。掃除の失敗は録音・文字起こしを巻き込まない。
 - **`/ingest/audio/complete` は冪等**。recorder はレスポンス喪失時に complete をリトライするため、完了済みでもオブジェクトが存在すれば 200 を返す。

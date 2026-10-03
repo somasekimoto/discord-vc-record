@@ -1,10 +1,9 @@
 # recorder (Discord 録音Bot) — Fly.io 常駐コンテナ
 # ネイティブモジュール(@discordjs/opus, @snazzah/davey)のビルドに toolchain が要る。
 # 文字起こしの ffmpeg も同梱する。
-FROM node:22-bookworm-slim
-
-# .ts を直接実行するため Node 22.18 以上が必須。キャッシュ済みの古い 22.x では起動時に落ちるので、build で止める。
-RUN node -e "const [a,b]=process.versions.node.split('.').map(Number); if (a<22||(a===22&&b<18)) { console.error('Node >=22.18.0 required, got '+process.version); process.exit(1); }"
+# 本番の Node はこの行で完全固定する。CI(recorder-test.yml)はこの版を読んで同じ版でテストする。
+# 更新は Dependabot の PR 経由（CI がその版で通ってからデプロイされる）。
+FROM node:22.23.3-bookworm-slim
 
 # ネイティブビルド用ツール + ffmpeg
 RUN apt-get update && apt-get install -y --no-install-recommends \
