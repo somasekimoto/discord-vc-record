@@ -39,13 +39,13 @@ node test/smoke.mjs
 SMOKE_BIG=1 node test/smoke.mjs   # large-upload path
 ```
 
-CI runs the recorder type check and tests, the web smoke test and gitleaks on every PR.
+CI runs gitleaks on every PR. The recorder type check and tests run when `recorder/**` changes, and the web smoke test runs when `web/**` changes.
 
 ## Adding an STT provider
 
 This is the most self-contained contribution. `recorder/src/stt/local.ts` (faster-whisper) is currently a stub.
 
-1. Create `recorder/src/stt/<name>.ts` exporting a `Transcribe` (see `recorder/src/stt/types.ts`)
+1. Create `recorder/src/stt/<name>.ts` exporting a `transcribe` function that satisfies the `Transcribe` type in `recorder/src/stt/types.ts`
 
    ```ts
    import type { TranscribeOptions, Transcription } from './types.ts';

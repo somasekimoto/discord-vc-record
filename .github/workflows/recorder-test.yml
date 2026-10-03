@@ -13,6 +13,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      # 1 版の失敗で他の版を打ち切らず、版ごとの結果を全部残す。
+      fail-fast: false
       matrix:
         node: [22.18.0, 22, 24]
     defaults:
@@ -35,7 +37,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       # --frozen-lockfile: lockfile と package.json がズレていたら CI を落とす
       - run: pnpm install --frozen-lockfile
+      # tsc の結果は実行 Node の版に依存しないので最低対応版で 1 回だけ。
       - run: pnpm run typecheck
+        if: matrix.node == '22.18.0'
       - run: pnpm test
 
   # 本番と同じ --prod install + native stripping。Discord には接続しない。
