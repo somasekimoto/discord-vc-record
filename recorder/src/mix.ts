@@ -1,5 +1,5 @@
 /**
- * mix.js — 会話全体を1本で聴けるミックス音声の生成
+ * mix.ts — 会話全体を1本で聴けるミックス音声の生成
  *
  * 話者別 PCM は発話部分だけが連結されて無音が潰れているため、そのまま重ねても
  * 会話にならない。recorder が記録した発話区間(実時刻+PCM内バイト位置)を使い、
@@ -10,9 +10,15 @@
  * 発話区間ごとに read-modify-write でチャンク合算する。話者の被り(同時発話)も
  * 同じ合算で自然に混ざる。
  */
+import type { FileHandle } from 'node:fs/promises';
+import type { SessionSnapshot, Track } from './types.ts';
 import { open, rm } from 'node:fs/promises';
 import { PCM_FORMAT } from './recorder.js';
 import { ffmpeg } from './ffmpeg.ts';
+
+type MixTrack = Pick<Track, 'pcmPath' | 'bytes' | 'utterances'>;
+type MixSummary = Pick<SessionSnapshot, 'startedAt' | 'endedAt'>;
+export type MixPlan = NonNullable<ReturnType<typeof computeMixPlan>>;
 
 const BYTES_PER_SEC = PCM_FORMAT.sampleRate * PCM_FORMAT.channels * (PCM_FORMAT.bitsPerSample / 8);
 // s16le stereo の1サンプルフレーム。全オフセットをこの境界に揃える
@@ -22,8 +28,8 @@ const CHUNK_BYTES = 1024 * 1024;
 // 音声のみなので控えめなビットレートで十分
 const AAC_BITRATE = '96k';
 
-const alignDown = (n) => n - (n % FRAME_BYTES);
-const msToBytes = (ms) => alignDown(Math.max(0, Math.round((ms / 1000) * BYTES_PER_SEC)));
+const alignDown = (n: number) => n - (n % FRAME_BYTES);
+const msToBytes = (ms: number) => alignDown(Math.max(0, Math.round((ms / 1000) * BYTES_PER_SEC)));
 
 /**
  * ミックスの配置計画を作る(純粋関数)。
@@ -33,7 +39,7 @@ const msToBytes = (ms) => alignDown(Math.max(0, Math.round((ms / 1000) * BYTES_P
  * @returns {{totalBytes:number, tracks:Array<{srcPath:string, segments:Array<{srcStart:number, length:number, dstOffset:number}>}>}|null}
  *   配置できる発話が1つも無ければ null(旧録音など utterances 未記録のトラックは除外)
  */
-export function computeMixPlan(summary, tracks) {
+export function computeMixPlan(summary: MixSummary, tracks: MixTrack[]) {
   let totalBytes = msToBytes((summary.endedAt ?? summary.startedAt) - summary.startedAt);
   const planTracks = [];
 
@@ -57,7 +63,7 @@ export function computeMixPlan(summary, tracks) {
 }
 
 /** offset から length バイトを buf に必ず読み切る(fh.read は1回で埋まる保証がない)。 */
-async function readExact(fh, buf, length, offset) {
+async function readExact(fh: FileHandle, buf: Buffer, length: number, offset: number) {
   let done = 0;
   while (done < length) {
     const { bytesRead } = await fh.read(buf, done, length - done, offset + done);
@@ -70,7 +76,7 @@ async function readExact(fh, buf, length, offset) {
  * 計画に従ってミックス PCM(s16le 48k stereo)を書き出す。
  * 既存内容に int16 で合算(クリップ付き)するため、話者間の重なりもそのまま混ざる。
  */
-export async function writeMixedPcm(plan, outPath) {
+export async function writeMixedPcm(plan: MixPlan, outPath: string) {
   const out = await open(outPath, 'w+');
   try {
     // セッション長ぶん先に確保する。未書き込み領域は 0(=無音)として読める
@@ -107,7 +113,7 @@ export async function writeMixedPcm(plan, outPath) {
  *
  * @returns {Promise<{path:string, durationSec:number}|null>} 配置できる発話が無ければ null
  */
-export async function buildMixedAudio(summary, tracks, outPath) {
+export async function buildMixedAudio(summary: MixSummary, tracks: MixTrack[], outPath: string) {
   const plan = computeMixPlan(summary, tracks);
   if (!plan) return null;
 

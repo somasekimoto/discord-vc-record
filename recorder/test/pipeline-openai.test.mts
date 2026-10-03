@@ -8,11 +8,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { makeSession, BYTES_PER_SEC } from './helpers.mjs';
+import { makeSession, BYTES_PER_SEC } from './helpers.mts';
 
 // --- モック OpenAI transcriptions API ---
 // multipart ボディのサイズから音声長を概算してテキストに埋める(区間の識別用)
-const calls = [];
+const calls: { size: number }[] = [];
 const server = createServer((req, res) => {
   let size = 0;
   req.on('data', (d) => (size += d.length));
@@ -22,14 +22,16 @@ const server = createServer((req, res) => {
     res.end(JSON.stringify({ text: `発話${calls.length}(${(size / BYTES_PER_SEC).toFixed(2)}s相当)` }));
   });
 });
-await new Promise((r) => server.listen(0, '127.0.0.1', r));
+await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
 
 process.env.STT_PROVIDER = 'openai';
 process.env.OPENAI_API_KEY = 'sk-test-dummy';
-process.env.OPENAI_BASE_URL = `http://127.0.0.1:${server.address().port}/v1`;
+const address = server.address();
+assert.ok(address && typeof address === 'object');
+process.env.OPENAI_BASE_URL = `http://127.0.0.1:${address.port}/v1`;
 delete process.env.WEB_BASE_URL;
 
-const { process: runPipeline } = await import('../src/pipeline.js');
+const { process: runPipeline } = await import('../src/pipeline.ts');
 
 test.after(() => server.close());
 
@@ -83,6 +85,7 @@ test('正常系: 結合・短小スキップ・時系列マージ・切り出し
 
     // speakers[].text は本人の発話テキストの連結
     const alice = minutes.speakers.find((s) => s.userId === '111');
+    assert.ok(alice);
     assert.match(alice.text, /発話/);
   } finally {
     await cleanup();

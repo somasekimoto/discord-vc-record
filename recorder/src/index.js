@@ -3,14 +3,14 @@
  *
  * Discord Gateway に接続し、スラッシュコマンド(/record, /setup)を処理する。
  * 録音は SessionManager(recorder.js)へ委譲。
- * /record stop 後の文字起こし・保管は pipeline.js(Phase 2)へ委譲する。
+ * /record stop 後の文字起こし・保管は pipeline.ts(Phase 2)へ委譲する。
  */
 import 'dotenv/config';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Client, GatewayIntentBits, MessageFlags } from 'discord.js';
 import { SessionManager, NoActiveSessionError } from './recorder.js';
-import { process as runPipeline } from './pipeline.js';
+import { process as runPipeline } from './pipeline.ts';
 import {
   JoinPromptNotifier,
   parsePromptChannelIds,
@@ -60,7 +60,7 @@ if (autoStop) {
 }
 
 // 保持期間を過ぎた録音データを削除(RECORDINGS_RETENTION_DAYS=0 で無効)。
-// 正本は R2 側。ローカルは reupload.js での復旧用の控えなので期限付きでよい。
+// 正本は R2 側。ローカルは reupload.ts での復旧用の控えなので期限付きでよい。
 const retentionMs = parseRetentionMs(process.env.RECORDINGS_RETENTION_DAYS);
 const PURGE_INTERVAL_MS = 6 * 60 * 60 * 1000; // 長時間稼働で溜まるのを防ぐ定期実行
 if (retentionMs > 0) {
@@ -224,7 +224,7 @@ async function startSession({ guildId, channelId, startedByUserId, notifyChannel
 /**
  * 録音停止を行う。進行中の録音がなければ null(停止経路の競合で後着になった場合を含む)。
  * session.stop 自体の失敗はそのまま投げ、呼び出し元でユーザーへ表面化させる。
- * 失敗時も PCM はディスクに残るが、wav/transcript 生成前のため reupload.js では
+ * 失敗時も PCM はディスクに残るが、wav/transcript 生成前のため reupload.ts では
  * 復旧できない(手動対応)。
  */
 async function stopSessionSafe(guildId) {

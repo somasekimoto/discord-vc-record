@@ -1,7 +1,7 @@
 /**
  * ffmpeg.ts — ffmpeg 実行の共通ヘルパー
  *
- * pipeline.js(wav 化・区間切り出し)と mix.js(ミックス音声のエンコード)で共用する。
+ * pipeline.ts(wav 化・区間切り出し)と mix.ts(ミックス音声のエンコード)で共用する。
  */
 import { spawn } from 'node:child_process';
 

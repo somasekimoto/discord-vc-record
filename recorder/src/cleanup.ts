@@ -9,7 +9,7 @@
  *   1. deletePcmFiles()      — アップロード成功直後に中間物の PCM を消す(効果最大)
  *   2. purgeOldSessions()    — 保持期間を過ぎたセッションを丸ごと消す
  *
- * 正本は R2(web)側。ローカルはアップロード失敗時に reupload.js で復旧する
+ * 正本は R2(web)側。ローカルはアップロード失敗時に reupload.ts で復旧する
  * ための控えなので、保持期間を過ぎたら消してよい。
  *
  * どの掃除も失敗は握りつぶしてログに残すだけにする。掃除の失敗で録音や
@@ -19,7 +19,7 @@ import { errorMessage, errorCode } from './types.ts';
 import { readdir, stat, unlink, rm, statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 
-/** 保持期間の既定(日)。reupload.js での復旧可能期間とのトレードオフ。 */
+/** 保持期間の既定(日)。reupload.ts での復旧可能期間とのトレードオフ。 */
 export const DEFAULT_RETENTION_DAYS = 14;
 
 /**
@@ -73,7 +73,7 @@ export function parseRetentionMs(raw: string | null | undefined) {
  * セッションディレクトリ内の .pcm を削除する。
  *
  * PCM は wav 生成の中間物で、アップロード後に参照する箇所は無い
- * (reupload.js が使うのは transcript.json / <userId>.wav / mixed.m4a のみ)。
+ * (reupload.ts が使うのは transcript.json / <userId>.wav / mixed.m4a のみ)。
  * よってアップロード成功後に消しても復旧手段を壊さない。
  *
  * @param {string} dir セッションディレクトリ
@@ -114,7 +114,7 @@ export async function deletePcmFiles(dir: string) {
  *
  * 判定は mtime。アップロード済みかはローカルでは分からない(recorder は
  * 完了マーカーを持たない)ため、「保持期間を過ぎたものは復旧を諦める」
- * という割り切りで消す。期間内であれば reupload.js で復旧できる。
+ * という割り切りで消す。期間内であれば reupload.ts で復旧できる。
  *
  * @param {string} baseDir 録音ルート
  * @param {object} [opts]
