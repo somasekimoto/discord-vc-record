@@ -34,12 +34,14 @@ pnpm test            # node:test; Discord and OpenAI are faked, ffmpeg is real
 # web
 cd web
 pnpm install --frozen-lockfile
-# ingest smoke test against a local Worker — see the header of web/test/smoke.mjs for setup
-node test/smoke.mjs
-SMOKE_BIG=1 node test/smoke.mjs   # large-upload path
+pnpm run typecheck
+pnpm test            # HTTP regression tests; starts a throwaway local Worker, no secrets needed
+# ingest smoke test against a local Worker — see the header of web/test/smoke.mts for setup
+node test/smoke.mts
+SMOKE_BIG=1 node test/smoke.mts   # large-upload path
 ```
 
-CI runs gitleaks on every PR. The recorder type check and tests run when `recorder/**` changes, and the web smoke test runs when `web/**` changes.
+CI runs gitleaks on every PR. The recorder type check and tests run when `recorder/**` changes. The web type check, regression tests, production-entry `deploy --dry-run` and smoke test (on the `engines` minimum Node) run when `web/**` changes.
 
 ## Adding an STT provider
 

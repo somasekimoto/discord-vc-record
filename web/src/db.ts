@@ -1,16 +1,18 @@
 /**
- * db.js — D1 クエリヘルパー
+ * db.ts — D1 クエリヘルパー
  */
 
-export async function getRequiredRole(db, guildId) {
+import type { SessionRow, SessionSummary, GuildSummary, ChannelSummary, ParticipantRow, TrackRow, SessionInsert, ParticipantInsert, TrackInsert } from './types.ts';
+
+export async function getRequiredRole(db: D1Database, guildId: string) {
   const row = await db
     .prepare('SELECT required_role_id FROM guild_config WHERE guild_id = ?')
     .bind(guildId)
-    .first();
+    .first<{ required_role_id: string | null }>();
   return row?.required_role_id ?? null;
 }
 
-export async function setRequiredRole(db, guildId, roleId) {
+export async function setRequiredRole(db: D1Database, guildId: string, roleId: string) {
   await db
     .prepare(
       `INSERT INTO guild_config (guild_id, required_role_id, updated_at)
@@ -22,18 +24,18 @@ export async function setRequiredRole(db, guildId, roleId) {
 }
 
 /** 録音が存在するギルドID一覧(録音数つき)。 */
-export async function listGuildsWithSessions(db) {
+export async function listGuildsWithSessions(db: D1Database) {
   const { results } = await db
     .prepare(
       `SELECT guild_id, COUNT(*) AS session_count, MAX(started_at) AS last_at
        FROM sessions GROUP BY guild_id ORDER BY last_at DESC`,
     )
-    .all();
+    .all<GuildSummary>();
   return results ?? [];
 }
 
 /** ギルド内の VC(チャンネル)一覧。録音数と最新時刻つき。 */
-export async function listChannels(db, guildId) {
+export async function listChannels(db: D1Database, guildId: string) {
   const { results } = await db
     .prepare(
       `SELECT channel_id,
@@ -44,12 +46,12 @@ export async function listChannels(db, guildId) {
        GROUP BY channel_id ORDER BY last_at DESC`,
     )
     .bind(guildId)
-    .all();
+    .all<ChannelSummary>();
   return results ?? [];
 }
 
 /** ギルド内のセッション一覧。channelId 指定でそのVCに絞る。 */
-export async function listSessions(db, guildId, channelId = null, limit = 100) {
+export async function listSessions(db: D1Database, guildId: string, channelId: string | null = null, limit = 100) {
   const sql = channelId
     ? `SELECT id, guild_id, channel_id, channel_name, started_at, ended_at, status, language, engine
        FROM sessions WHERE guild_id = ? AND channel_id = ? ORDER BY started_at DESC LIMIT ?`
@@ -58,32 +60,32 @@ export async function listSessions(db, guildId, channelId = null, limit = 100) {
   const stmt = channelId
     ? db.prepare(sql).bind(guildId, channelId, limit)
     : db.prepare(sql).bind(guildId, limit);
-  const { results } = await stmt.all();
+  const { results } = await stmt.all<SessionSummary>();
   return results ?? [];
 }
 
-export async function getSession(db, sessionId) {
-  return db.prepare('SELECT * FROM sessions WHERE id = ?').bind(sessionId).first();
+export async function getSession(db: D1Database, sessionId: string) {
+  return db.prepare('SELECT * FROM sessions WHERE id = ?').bind(sessionId).first<SessionRow>();
 }
 
-export async function getParticipants(db, sessionId) {
+export async function getParticipants(db: D1Database, sessionId: string) {
   const { results } = await db
     .prepare('SELECT user_id, display_name, joined_at, left_at FROM participants WHERE session_id = ?')
     .bind(sessionId)
-    .all();
+    .all<ParticipantRow>();
   return results ?? [];
 }
 
-export async function getTracks(db, sessionId) {
+export async function getTracks(db: D1Database, sessionId: string) {
   const { results } = await db
     .prepare('SELECT id, user_id, r2_key, duration_sec FROM tracks WHERE session_id = ?')
     .bind(sessionId)
-    .all();
+    .all<TrackRow>();
   return results ?? [];
 }
 
 /** recorder からの取り込み: セッション・参加者・トラックをまとめて upsert。 */
-export async function upsertSession(db, s) {
+export async function upsertSession(db: D1Database, s: SessionInsert) {
   await db
     .prepare(
       `INSERT INTO sessions
@@ -102,7 +104,7 @@ export async function upsertSession(db, s) {
     .run();
 }
 
-export async function insertParticipants(db, sessionId, participants) {
+export async function insertParticipants(db: D1Database, sessionId: string, participants: ParticipantInsert[]) {
   const stmt = db.prepare(
     `INSERT INTO participants (session_id, user_id, display_name, joined_at, left_at)
      VALUES (?,?,?,?,?)
@@ -115,7 +117,7 @@ export async function insertParticipants(db, sessionId, participants) {
   if (batch.length) await db.batch(batch);
 }
 
-export async function insertTracks(db, sessionId, tracks) {
+export async function insertTracks(db: D1Database, sessionId: string, tracks: TrackInsert[]) {
   // r2_key/duration_sec は「新しい値が null なら既存値を残す」。
   // 音声は /ingest の meta 登録後に別途アップロードされるため、meta の再送で
   // アップロード済みの r2_key を null で潰さないようにする。

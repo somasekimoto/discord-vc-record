@@ -11,6 +11,7 @@ recorder/recordings/
 *.pcm
 *.wav
 .wrangler/
+web/worker-configuration.d.ts
 dist/
 .DS_Store
 .dev.vars

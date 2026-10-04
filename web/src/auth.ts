@@ -1,5 +1,5 @@
 /**
- * auth.js — Discord OAuth2 ログインとセッションcookie
+ * auth.ts — Discord OAuth2 ログインとセッションcookie
  *
  * フロー:
  *   /login            -> Discord 認可画面へリダイレクト(scope: identify guilds.members.read)
@@ -8,21 +8,24 @@
  *
  * cookie は HMAC 署名付きの自己完結トークン(KV不要)。
  */
+import type { AuthEnv, SessionPayload } from './types.ts';
+import { legacyPayload } from './boundaries.ts';
+
 const OAUTH_SCOPE = 'identify guilds guilds.members.read';
 const COOKIE_NAME = 'vcr_session';
 const SESSION_TTL_SEC = 60 * 60 * 8; // 8時間
 
-function b64url(buf) {
+function b64url(buf: ArrayBuffer | Uint8Array) {
   return btoa(String.fromCharCode(...new Uint8Array(buf)))
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
-function b64urlDecode(str) {
+function b64urlDecode(str: string) {
   str = str.replace(/-/g, '+').replace(/_/g, '/');
   const bin = atob(str);
   return Uint8Array.from(bin, (c) => c.charCodeAt(0));
 }
 
-async function hmac(secret, data) {
+async function hmac(secret: string, data: string) {
   const key = await crypto.subtle.importKey(
     'raw', new TextEncoder().encode(secret),
     { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
@@ -32,14 +35,14 @@ async function hmac(secret, data) {
 }
 
 /** payload(object) を署名付きトークンにする。 */
-export async function signSession(payload, secret) {
+export async function signSession(payload: SessionPayload, secret: string) {
   const body = b64url(new TextEncoder().encode(JSON.stringify(payload)));
   const sig = await hmac(secret, body);
   return `${body}.${sig}`;
 }
 
 /** トークンを検証して payload を返す。失敗時 null。 */
-export async function verifySession(token, secret) {
+export async function verifySession(token: string | null, secret: string) {
   if (!token || !token.includes('.')) return null;
   const [body, sig] = token.split('.');
   const expected = await hmac(secret, body);
@@ -49,7 +52,8 @@ export async function verifySession(token, secret) {
   for (let i = 0; i < sig.length; i++) diff |= sig.charCodeAt(i) ^ expected.charCodeAt(i);
   if (diff !== 0) return null;
   try {
-    const payload = JSON.parse(new TextDecoder().decode(b64urlDecode(body)));
+    const raw: unknown = JSON.parse(new TextDecoder().decode(b64urlDecode(body)));
+    const payload = legacyPayload('session', raw);
     if (payload.exp && Date.now() / 1000 > payload.exp) return null;
     return payload;
   } catch {
@@ -57,20 +61,20 @@ export async function verifySession(token, secret) {
   }
 }
 
-function getCookie(req, name) {
+function getCookie(req: Request, name: string) {
   const cookie = req.headers.get('Cookie') || '';
   const m = cookie.match(new RegExp(`(?:^|; )${name}=([^;]+)`));
   return m ? decodeURIComponent(m[1]) : null;
 }
 
 /** リクエストから現在のログインセッションを取り出す。 */
-export async function getSession(req, env) {
+export async function getSession(req: Request, env: Pick<AuthEnv, 'SESSION_SECRET'>) {
   const token = getCookie(req, COOKIE_NAME);
   return verifySession(token, env.SESSION_SECRET);
 }
 
 /** /login: Discord 認可画面へ。`next` に戻り先を載せる。 */
-export function handleLogin(req, env) {
+export function handleLogin(req: Request, env: AuthEnv) {
   const url = new URL(req.url);
   const next = url.searchParams.get('next') || '/';
   const redirectUri = `${env.WEB_BASE_URL}/callback`;
@@ -84,7 +88,7 @@ export function handleLogin(req, env) {
 }
 
 /** /callback: code をトークン交換し、cookie を発行して next へ戻す。 */
-export async function handleCallback(req, env) {
+export async function handleCallback(req: Request, env: AuthEnv) {
   const url = new URL(req.url);
   const code = url.searchParams.get('code');
   const next = url.searchParams.get('state') || '/';
@@ -105,14 +109,16 @@ export async function handleCallback(req, env) {
   if (!tokenRes.ok) {
     return new Response(`token exchange failed: ${await tokenRes.text()}`, { status: 502 });
   }
-  const tok = await tokenRes.json();
+  const rawToken: unknown = await tokenRes.json();
+  const tok = legacyPayload('token', rawToken);
 
   // ユーザーID取得
   const meRes = await fetch('https://discord.com/api/users/@me', {
     headers: { Authorization: `Bearer ${tok.access_token}` },
   });
   if (!meRes.ok) return new Response('failed to fetch user', { status: 502 });
-  const me = await meRes.json();
+  const rawUser: unknown = await meRes.json();
+  const me = legacyPayload('user', rawUser);
 
   const payload = {
     userId: me.id,

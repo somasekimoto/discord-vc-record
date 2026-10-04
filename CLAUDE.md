@@ -29,8 +29,14 @@ node src/reupload.ts <sessionId>          # アップロードだけ失敗した
 ```bash
 pnpm run dev                              # wrangler dev（ローカル D1/R2 エミュレーション）
 pnpm run deploy                           # wrangler deploy
-pnpm exec wrangler d1 execute <db> --local --file=schema.sql   # ローカル D1 にスキーマ適用
-node test/smoke.mjs                       # 取り込みフロー E2E（wrangler dev :8788 を先に起動。SMOKE_BIG=1 で 105MiB 分割も検証）
+pnpm exec wrangler d1 execute <db> --local --file=schema.sql   # ローカル D1 にスキーマ適用（実 wrangler.toml）
+pnpm run typecheck                        # Worker 型を wrangler.ci.toml から生成して strict 型チェック
+pnpm test                                 # HTTP 回帰テスト（一時 Worker を自動起動。secret 不要）
+
+# 取り込みフロー E2E。smoke は wrangler.ci.toml のローカル D1 を使うので schema も同じ config に適用する
+pnpm exec wrangler d1 execute vc-record --config wrangler.ci.toml --local --file=schema.sql
+pnpm exec wrangler dev --config wrangler.ci.toml --port 8788 --var INGEST_SECRET:smoke-test-secret
+node test/smoke.mts                       # 別ターミナルで。SMOKE_BIG=1 で 105MiB 分割も検証
 ```
 
 ## アーキテクチャ上の重要な不変条件
@@ -40,7 +46,7 @@ node test/smoke.mjs                       # 取り込みフロー E2E（wrangler
 - **recorder は単一インスタンス必須**（`flyctl deploy --ha=false`）。複数だと同じ VC を二重録音する。メモリは 2GB 以上（wav 化+STT で 512MB を超え OOM する）。録音データは Fly ボリューム（`fly.toml` の `[mounts]`）に置く。
 - **ボリュームが満杯になると録音が開始できなくなる**（`ENOSPC`、stop 後の pipeline 途中でも起きて文字起こしを失う）。`cleanup.ts` が2段構えで削除する: アップロード成功直後に中間物の PCM を消し、`RECORDINGS_RETENTION_DAYS`（既定14日、`0` で無効）を過ぎたセッションを丸ごと消す。**アップロード失敗時は PCM を残す**（wav を作り直せないと `reupload.ts` での復旧手段まで失うため）。掃除の失敗は録音・文字起こしを巻き込まない。
 - **`/ingest/audio/complete` は冪等**。recorder はレスポンス喪失時に complete をリトライするため、完了済みでもオブジェクトが存在すれば 200 を返す。
-- **認可は毎リクエスト Discord に問い合わせ**（`web/src/authz.js`）。ギルドの `required_role_id`（D1 `guild_config`、`/setup` で設定）の保有を確認する。
+- **認可は毎リクエスト Discord に問い合わせ**（`web/src/authz.ts`）。ギルドの `required_role_id`（D1 `guild_config`、`/setup` で設定）の保有を確認する。
 - **STT はプロバイダ抽象化**（`recorder/src/stt/index.ts`）。`pipeline.ts` は `transcribe()` だけを呼ぶ。プロバイダ追加 = ファイル1枚 + 分岐1行。既定は OpenAI `gpt-4o-transcribe`、`STT_PROVIDER` で切替。
 - 入室プロンプト（`join-prompt.ts`）の「最初の1人」判定は voiceStates ベースの best-effort。member 未解決の在室者は人間扱いし、誤通知より通知抑制に倒す。プロンプトの「録音を開始」ボタン（`customId` は `recstart:<channelId>`）と `/rec start` は `index.ts` の `startSession` を共有する。二重開始の排他は `SessionManager.start` の `byGuild` 登録が担保（後着は throw）。
 - 自動停止（`auto-stop.ts`）の無人判定も同じく voiceStates ベース。member 未解決の在室者は人間扱いし、会議中の誤停止より停止抑制に倒す。停止経路（自動/ボタン/`/rec stop`）は競合しうるため `index.ts` の `stopSessionSafe` で冪等化している。

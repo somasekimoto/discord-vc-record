@@ -5,7 +5,7 @@
 This repository has two deployable Node.js ESM packages:
 
 - `recorder/`: Discord voice recorder bot for Fly.io. Runtime code is in `recorder/src/`, STT adapters are in `recorder/src/stt/`, and unit/integration tests are in `recorder/test/*.test.mts`.
-- `web/`: Cloudflare Worker WebUI, auth, ingest API, D1 access, and R2 delivery. Source lives in `web/src/`, the D1 schema is `web/schema.sql`, and the smoke test is `web/test/smoke.mjs`.
+- `web/`: Cloudflare Worker WebUI, auth, ingest API, D1 access, and R2 delivery. Source lives in `web/src/`, the D1 schema is `web/schema.sql`, HTTP regression tests are `web/test/*.test.mts`, and the ingest smoke test is `web/test/smoke.mts`.
 - `scripts/`: local maintenance helpers, including `scripts/setup-hooks.sh` for gitleaks hooks.
 
 Keep generated recordings, real `.env` files, `fly.toml`, and `wrangler.toml` out of git. Start from the provided `*.example` files.
@@ -20,15 +20,17 @@ Keep generated recordings, real `.env` files, `fly.toml`, and `wrangler.toml` ou
 - `cd web && pnpm install`: install Wrangler for Worker development.
 - `cd web && pnpm run dev`: start `wrangler dev`.
 - `cd web && pnpm run deploy`: deploy the Worker.
-- `cd web && node test/smoke.mjs`: run the ingest smoke test against a local Worker after applying `schema.sql` and starting Wrangler as documented in the test header.
+- `cd web && pnpm run typecheck`: generate Worker types from `wrangler.ci.toml` and run strict TypeScript checks.
+- `cd web && pnpm test`: run HTTP regression tests against a throwaway local Worker (no secrets or Cloudflare account needed).
+- `cd web && node test/smoke.mts`: run the ingest smoke test against a local Worker after applying `schema.sql` and starting Wrangler, both with `--config wrangler.ci.toml`, exactly as documented in the test header.
 
 ## Coding Style & Naming Conventions
 
-Use ESM `import`/`export`, two-space indentation, semicolons, and single quotes. Prefer small functions with explicit names such as `handleIngest`, `setRequiredRole`, or `parsePromptChannelIds`. Recorder tests use `.test.mts`. TypeScript runs directly on Node: use explicit `.ts` / `.mts` import extensions and `import type`; do not use enums, parameter properties, or path aliases. Existing user-facing text is mostly Japanese; keep nearby language consistent.
+Use ESM `import`/`export`, two-space indentation, semicolons, and single quotes. Prefer small functions with explicit names such as `handleIngest`, `setRequiredRole`, or `parsePromptChannelIds`. Tests run by `pnpm test` use `.test.mts` in both `recorder/` and `web/`. TypeScript runs directly on Node: use explicit `.ts` / `.mts` import extensions and `import type`; do not use enums, parameter properties, or path aliases. Existing user-facing text is mostly Japanese; keep nearby language consistent.
 
 ## Testing Guidelines
 
-Recorder tests use `node:test` and `node:assert/strict`. Add focused tests beside related behavior in `recorder/test/`. Web coverage currently relies on `web/test/smoke.mjs`; update it when ingest, auth, D1, or R2 flows change. For large upload behavior, use `SMOKE_BIG=1 node test/smoke.mjs`.
+Recorder tests use `node:test` and `node:assert/strict`. Add focused tests beside related behavior in `recorder/test/`. Web coverage is `web/test/routes.test.mts` (auth, authorization, listing, downloads) plus `web/test/smoke.mts` (ingest); update them when ingest, auth, D1, or R2 flows change. See `web/TESTING.md`. For large upload behavior, use `SMOKE_BIG=1 node test/smoke.mts`.
 
 ## Commit & Pull Request Guidelines
 
