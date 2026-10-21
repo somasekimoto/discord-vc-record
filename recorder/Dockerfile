@@ -3,7 +3,7 @@
 # 文字起こしの ffmpeg も同梱する。
 # 本番の Node はこの行で完全固定する。CI(recorder-test.yml)はこの版を読んで同じ版でテストする。
 # 更新は Dependabot の PR 経由（CI がその版で通ってからデプロイされる）。
-FROM node:22.23.3-bookworm-slim
+FROM node:22.23.4-bookworm-slim
 
 # ネイティブビルド用ツール + ffmpeg
 RUN apt-get update && apt-get install -y --no-install-recommends \
