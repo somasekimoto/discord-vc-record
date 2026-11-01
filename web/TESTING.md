@@ -56,3 +56,4 @@ Discordへのfetchだけをstubにし、予期しない外部リクエストは�
 認可キャッシュは既存通りuserId:guildId単位で5分。許可/拒否をキャッシュし、429はキャッシュしない。キャッシュ中にtoken/role設定が変わっても古い判定を使う。拒否ページはHTTP 200、OAuth stateは従来通り戻り先でありCSRF対策ではない。これらの仕様変更は別件とする。
 
 既存の実 `wrangler.toml` は自動更新しない。承認後にmainだけ `src/index.ts` へ手動更新し、実binding/vars/secretは保持する。
+
