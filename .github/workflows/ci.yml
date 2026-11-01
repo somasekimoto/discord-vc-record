@@ -41,12 +41,13 @@ jobs:
             head=$PUSH_AFTER
           fi
           case "$base" in ''|0000000000000000000000000000000000000000) all "比較元がない" ;; esac
-          files=$(git diff --name-only "$base" "$head") || all "差分を取れない"
+          # --no-renames: rename は既定で移動先しか出ず、recorder/ や web/ からの移動を見逃すので両側を出す。
+          files=$(git diff --no-renames --name-only "$base" "$head") || all "差分を取れない"
           printf '%s\n' "$files"
-          # ゲート自体や呼び出し先 workflow の変更は、両方を通して確かめる。
+          # workflow 定義の変更は、両方を通して確かめる(ゲート・呼び出し先以外の workflow も含め広めに倒す)。
           # pipefail 下で grep -q が早期終了すると printf が SIGPIPE で落ち誤判定するため here-string で渡す。
-          if grep -qE '^\.github/workflows/(ci|recorder-test|smoke)\.yml$' <<< "$files"; then
-            all "CI 定義の変更"
+          if grep -q '^\.github/workflows/' <<< "$files"; then
+            all "workflow 定義の変更"
           fi
           has() { if grep -q "^$1/" <<< "$files"; then echo true; else echo false; fi; }
           echo "recorder=$(has recorder)" >> "$GITHUB_OUTPUT"

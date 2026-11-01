@@ -67,7 +67,7 @@ node test/smoke.mts                       # 別ターミナルで。SMOKE_BIG=1 
 
 ## CI（`.github/workflows/`）
 
-- `ci.yml` — 統合ゲート。全 PR / main push で起動し、変更範囲（`recorder/**` / `web/**`、CI 定義の変更時は両方）に応じて下の 2 つを `workflow_call` で呼ぶ。`gate` job が「必要な側は success、対象外は skipped」のときだけ成功する
+- `ci.yml` — 統合ゲート。全 PR / main push で起動し、変更範囲（`recorder/**` / `web/**`、`.github/workflows/` の変更時は両方）に応じて下の 2 つを `workflow_call` で呼ぶ。`gate` job が「必要な側は success、対象外は skipped」のときだけ成功する
 - `recorder-test.yml` — recorder のテスト（ffmpeg をインストールして `pnpm test`）。ci.yml から呼ばれる（単独は手動実行のみ）
 - `smoke.yml` — web の取り込みフロー E2E（CI 用の最小 `wrangler.toml` を生成してローカルモードで実行）。同上
 - `gitleaks.yml` — シークレットスキャン（常時起動）
