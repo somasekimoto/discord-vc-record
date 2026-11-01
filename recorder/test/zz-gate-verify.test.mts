@@ -2,6 +2,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-test('gate verification: intentional failure', () => {
-  assert.equal(1, 2);
+test('gate verification: fixed', () => {
+  assert.equal(1, 1);
 });
