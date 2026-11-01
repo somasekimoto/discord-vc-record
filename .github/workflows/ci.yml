@@ -42,7 +42,8 @@ jobs:
           fi
           case "$base" in ''|0000000000000000000000000000000000000000) all "比較元がない" ;; esac
           # --no-renames: rename は既定で移動先しか出ず、recorder/ や web/ からの移動を見逃すので両側を出す。
-          files=$(git diff --no-renames --name-only "$base" "$head") || all "差分を取れない"
+          # core.quotePath=false: 日本語ファイル名が "..." で引用されて ^recorder/ に一致しなくなるのを防ぐ。
+          files=$(git -c core.quotePath=false diff --no-renames --name-only "$base" "$head") || all "差分を取れない"
           printf '%s\n' "$files"
           # workflow 定義の変更は、両方を通して確かめる(ゲート・呼び出し先以外の workflow も含め広めに倒す)。
           # pipefail 下で grep -q が早期終了すると printf が SIGPIPE で落ち誤判定するため here-string で渡す。
