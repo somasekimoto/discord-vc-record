@@ -67,6 +67,9 @@ node test/smoke.mts                       # 別ターミナルで。SMOKE_BIG=1 
 
 ## CI（`.github/workflows/`）
 
-- `recorder-test.yml` — recorder のテスト（ffmpeg をインストールして `pnpm test`）
-- `smoke.yml` — web の取り込みフロー E2E（CI 用の最小 `wrangler.toml` を生成してローカルモードで実行）
-- `gitleaks.yml` — シークレットスキャン
+- `ci.yml` — 統合ゲート。全 PR / main push で起動し、変更範囲（`recorder/**` / `web/**`、CI 定義の変更時は両方）に応じて下の 2 つを `workflow_call` で呼ぶ。`gate` job が「必要な側は success、対象外は skipped」のときだけ成功する
+- `recorder-test.yml` — recorder のテスト（ffmpeg をインストールして `pnpm test`）。ci.yml から呼ばれる（単独は手動実行のみ）
+- `smoke.yml` — web の取り込みフロー E2E（CI 用の最小 `wrangler.toml` を生成してローカルモードで実行）。同上
+- `gitleaks.yml` — シークレットスキャン（常時起動）
+
+main の ruleset は `gate` と `scan`（gitleaks）を required check にしている（承認不要・管理者も迂回不可）。job を足すときは ci.yml の `gate` の判定に入れる。paths 付きの workflow を required check にしない（対象外の PR が永久に待ちになる）。
