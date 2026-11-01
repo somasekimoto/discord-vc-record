@@ -1,0 +1,94 @@
+# main の required check(`gate`)を出す統合ゲート。paths で絞らず全 PR / main push で必ず起動する。
+# 変更範囲に応じて recorder-test / smoke を呼び、「対象外で skip」と「必要な検証の失敗・未実行」を区別して判定する。
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      recorder: ${{ steps.diff.outputs.recorder }}
+      web: ${{ steps.diff.outputs.web }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          all() {
+            echo "$1 — 両方を検証する"
+            echo "recorder=true" >> "$GITHUB_OUTPUT"
+            echo "web=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          if [ "$EVENT" = pull_request ]; then
+            base=$(git merge-base "$PR_BASE" "$PR_HEAD") || all "merge-base を求められない"
+            head=$PR_HEAD
+          else
+            base=$PUSH_BEFORE
+            head=$PUSH_AFTER
+          fi
+          case "$base" in ''|0000000000000000000000000000000000000000) all "比較元がない" ;; esac
+          # --no-renames: rename は既定で移動先しか出ず、recorder/ や web/ からの移動を見逃すので両側を出す。
+          # core.quotePath=false: 日本語ファイル名が "..." で引用されて ^recorder/ に一致しなくなるのを防ぐ。
+          files=$(git -c core.quotePath=false diff --no-renames --name-only "$base" "$head") || all "差分を取れない"
+          printf '%s\n' "$files"
+          # workflow 定義の変更は、両方を通して確かめる(ゲート・呼び出し先以外の workflow も含め広めに倒す)。
+          # pipefail 下で grep -q が早期終了すると printf が SIGPIPE で落ち誤判定するため here-string で渡す。
+          if grep -q '^\.github/workflows/' <<< "$files"; then
+            all "workflow 定義の変更"
+          fi
+          has() { if grep -q "^$1/" <<< "$files"; then echo true; else echo false; fi; }
+          echo "recorder=$(has recorder)" >> "$GITHUB_OUTPUT"
+          echo "web=$(has web)" >> "$GITHUB_OUTPUT"
+
+  recorder:
+    needs: changes
+    if: needs.changes.outputs.recorder == 'true'
+    uses: ./.github/workflows/recorder-test.yml
+
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    uses: ./.github/workflows/smoke.yml
+
+  # required check はこの job だけ。呼び出し先の job 名・matrix が変わっても ruleset を直さずに済む。
+  gate:
+    needs: [changes, recorder, web]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          CHANGES: ${{ needs.changes.result }}
+          NEED_RECORDER: ${{ needs.changes.outputs.recorder }}
+          NEED_WEB: ${{ needs.changes.outputs.web }}
+          RECORDER: ${{ needs.recorder.result }}
+          WEB: ${{ needs.web.result }}
+        run: |
+          echo "changes=$CHANGES recorder(need=$NEED_RECORDER)=$RECORDER web(need=$NEED_WEB)=$WEB"
+          if [ "$CHANGES" != success ]; then echo "変更範囲の判定に失敗" >&2; exit 1; fi
+          ok=true
+          # 必要な側は success のみ可(failure / cancelled / skipped は不可)。不要な側は skipped のはず。
+          check() {
+            name=$1 need=$2 result=$3
+            if [ "$need" = true ]; then
+              [ "$result" = success ] || { echo "$name: 必要な検証が $result" >&2; ok=false; }
+            else
+              [ "$result" = skipped ] || { echo "$name: 対象外なのに $result" >&2; ok=false; }
+            fi
+          }
+          check recorder "$NEED_RECORDER" "$RECORDER"
+          check web "$NEED_WEB" "$WEB"
+          [ "$ok" = true ]

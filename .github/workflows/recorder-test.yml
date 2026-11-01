@@ -2,12 +2,10 @@
 # 擬似PCM+モックSTTでの pipeline 統合テストを実行する。
 # 統合テストは wav 切り出しに ffmpeg を使うためインストールする。
 name: recorder-test
+# PR / main push での起動は ci.yml(統合ゲート)が変更範囲を見て呼び出す。単独起動は手動のみ。
 on:
-  pull_request:
-    paths: ['recorder/**', '.github/workflows/recorder-test.yml']
-  push:
-    branches: [main]
-    paths: ['recorder/**', '.github/workflows/recorder-test.yml']
+  workflow_call:
+  workflow_dispatch:
 
 jobs:
   # 本番の Node は recorder/Dockerfile の FROM で固定している。CI はそこから版を読み、本番と同じ版で検証する。
