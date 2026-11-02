@@ -1,5 +1,5 @@
 # main の required check(`gate`)を出す統合ゲート。paths で絞らず全 PR / main push で必ず起動する。
-# 変更範囲に応じて recorder-test / smoke を呼び、「対象外で skip」と「必要な検証の失敗・未実行」を区別して判定する。
+# 変更範囲に応じて recorder-test / smoke / contract を呼び、「対象外で skip」と「必要な検証の失敗・未実行」を区別して判定する。
 name: ci
 on:
   pull_request:
@@ -64,9 +64,15 @@ jobs:
     if: needs.changes.outputs.web == 'true'
     uses: ./.github/workflows/smoke.yml
 
+  # recorder の uploader と web の ingest を両側接続する契約テスト。どちらか片側の変更でも実行する。
+  contract:
+    needs: changes
+    if: needs.changes.outputs.recorder == 'true' || needs.changes.outputs.web == 'true'
+    uses: ./.github/workflows/contract.yml
+
   # required check はこの job だけ。呼び出し先の job 名・matrix が変わっても ruleset を直さずに済む。
   gate:
-    needs: [changes, recorder, web]
+    needs: [changes, recorder, web, contract]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -76,8 +82,11 @@ jobs:
           NEED_WEB: ${{ needs.changes.outputs.web }}
           RECORDER: ${{ needs.recorder.result }}
           WEB: ${{ needs.web.result }}
+          CONTRACT: ${{ needs.contract.result }}
         run: |
-          echo "changes=$CHANGES recorder(need=$NEED_RECORDER)=$RECORDER web(need=$NEED_WEB)=$WEB"
+          need_contract=false
+          if [ "$NEED_RECORDER" = true ] || [ "$NEED_WEB" = true ]; then need_contract=true; fi
+          echo "changes=$CHANGES recorder(need=$NEED_RECORDER)=$RECORDER web(need=$NEED_WEB)=$WEB contract(need=$need_contract)=$CONTRACT"
           if [ "$CHANGES" != success ]; then echo "変更範囲の判定に失敗" >&2; exit 1; fi
           ok=true
           # 必要な側は success のみ可(failure / cancelled / skipped は不可)。不要な側は skipped のはず。
@@ -91,4 +100,5 @@ jobs:
           }
           check recorder "$NEED_RECORDER" "$RECORDER"
           check web "$NEED_WEB" "$WEB"
+          check contract "$need_contract" "$CONTRACT"
           [ "$ok" = true ]

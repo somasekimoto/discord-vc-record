@@ -30,7 +30,7 @@ Use ESM `import`/`export`, two-space indentation, semicolons, and single quotes.
 
 ## Testing Guidelines
 
-Recorder tests use `node:test` and `node:assert/strict`. Add focused tests beside related behavior in `recorder/test/`. Web coverage is `web/test/routes.test.mts` (auth, authorization, listing, downloads) plus `web/test/smoke.mts` (ingest); update them when ingest, auth, D1, or R2 flows change. See `web/TESTING.md`. For large upload behavior, use `SMOKE_BIG=1 node test/smoke.mts`.
+Recorder tests use `node:test` and `node:assert/strict`. Add focused tests beside related behavior in `recorder/test/`. Web coverage is `web/test/routes.test.mts` (auth, authorization, listing, downloads) plus `web/test/smoke.mts` (ingest); update them when ingest, auth, D1, or R2 flows change. `web/test/recorder-contract.mts` (`cd web && pnpm run test:contract`) connects the real recorder uploader to a local Worker; update it when the upload/ingest contract or retry behavior changes. See `web/TESTING.md`. For large upload behavior, use `SMOKE_BIG=1 node test/smoke.mts`.
 
 ## Commit & Pull Request Guidelines
 

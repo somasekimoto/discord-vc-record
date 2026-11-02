@@ -32,6 +32,7 @@ pnpm run deploy                           # wrangler deploy
 pnpm exec wrangler d1 execute <db> --local --file=schema.sql   # ローカル D1 にスキーマ適用（実 wrangler.toml）
 pnpm run typecheck                        # Worker 型を wrangler.ci.toml から生成して strict 型チェック
 pnpm test                                 # HTTP 回帰テスト（一時 Worker を自動起動。secret 不要）
+pnpm run test:contract                    # 実 recorder uploader → 一時 Worker の契約テスト（応答喪失・部分失敗→再送）
 
 # 取り込みフロー E2E。smoke は wrangler.ci.toml のローカル D1 を使うので schema も同じ config に適用する
 pnpm exec wrangler d1 execute vc-record --config wrangler.ci.toml --local --file=schema.sql
@@ -67,9 +68,10 @@ node test/smoke.mts                       # 別ターミナルで。SMOKE_BIG=1 
 
 ## CI（`.github/workflows/`）
 
-- `ci.yml` — 統合ゲート。全 PR / main push で起動し、変更範囲（`recorder/**` / `web/**`、`.github/workflows/` の変更時は両方）に応じて下の 2 つを `workflow_call` で呼ぶ。`gate` job が「必要な側は success、対象外は skipped」のときだけ成功する
+- `ci.yml` — 統合ゲート。全 PR / main push で起動し、変更範囲（`recorder/**` / `web/**`、`.github/workflows/` の変更時は両方）に応じて下の 3 つを `workflow_call` で呼ぶ。`gate` job が「必要な側は success、対象外は skipped」のときだけ成功する
 - `recorder-test.yml` — recorder のテスト（ffmpeg をインストールして `pnpm test`）。ci.yml から呼ばれる（単独は手動実行のみ）
 - `smoke.yml` — web の取り込みフロー E2E（CI 用の最小 `wrangler.toml` を生成してローカルモードで実行）。同上
+- `contract.yml` — recorder → web の契約テスト（`web/test/recorder-contract.mts`）。recorder / web どちらの変更でも ci.yml から呼ばれる
 - `gitleaks.yml` — シークレットスキャン（常時起動）
 
 main の ruleset は `gate` と `scan`（gitleaks）を required check にしている（承認不要・管理者も迂回不可）。job を足すときは ci.yml の `gate` の判定に入れる。paths 付きの workflow を required check にしない（対象外の PR が永久に待ちになる）。

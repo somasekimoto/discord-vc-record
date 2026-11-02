@@ -42,7 +42,7 @@ export default {
       return new Response('ok');
     }
     if (url.pathname === '/__test/tracks') {
-      const { results } = await env.DB.prepare('SELECT user_id, r2_key, duration_sec FROM tracks WHERE session_id = ? ORDER BY user_id').bind('route-fixture').all<{ user_id: string; r2_key: string | null; duration_sec: number | null }>();
+      const { results } = await env.DB.prepare('SELECT user_id, r2_key, duration_sec FROM tracks WHERE session_id = ? ORDER BY user_id').bind(url.searchParams.get('session') || 'route-fixture').all<{ user_id: string; r2_key: string | null; duration_sec: number | null }>();
       return Response.json({ tracks: results });
     }
     if (url.pathname === '/__test/mode') { discordMode = url.searchParams.get('mode') || 'success'; return new Response('ok'); }
