@@ -1,74 +1,23 @@
 import { before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, execFileSync } from 'node:child_process';
-import { setTimeout } from 'node:timers/promises';
-import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createServer } from 'node:net';
-import { randomUUID } from 'node:crypto';
 
-import type { ChildProcessByStdio } from 'node:child_process';
-import type { Readable } from 'node:stream';
 import { readObject, readUpload } from './http.mts';
+import { INGEST_SECRET, startWorker } from './worker-process.mts';
+import type { WorkerProcess } from './worker-process.mts';
 
 let base: string;
-const auth = { Authorization: 'Bearer smoke-test-secret' };
-let server: ChildProcessByStdio<null, Readable, Readable> | undefined;
-let stateDirectory: string | undefined;
-let logs = '';
+const auth = { Authorization: `Bearer ${INGEST_SECRET}` };
+let worker: WorkerProcess | undefined;
 let cookie: string;
-const runId = randomUUID();
 before(async () => {
-  stateDirectory = await mkdtemp(join(tmpdir(), 'vc-web-test-'));
-  // 予約用socketを閉じてからWranglerを起動。万一の競合はrunIdで検出する。
-  const reservation = createServer();
-  await new Promise<void>((resolve, reject) => {
-    reservation.once('error', reject);
-    reservation.listen(0, '127.0.0.1', resolve);
-  });
-  const address = reservation.address();
-  if (!address || typeof address === 'string') throw new Error('Missing local port');
-  const port = address.port;
-  await new Promise<void>((resolve, reject) => reservation.close((error) => error ? reject(error) : resolve()));
-  base = `http://127.0.0.1:${port}`;
-  const env = { ...process.env, WRANGLER_SEND_METRICS: 'false' };
-  execFileSync(process.execPath, [
-    'node_modules/wrangler/bin/wrangler.js', 'd1', 'execute', 'vc-record',
-    '--config', 'wrangler.ci.toml', '--local', '--file=schema.sql', '--persist-to', stateDirectory,
-  ], { env });
-  server = spawn(process.execPath, [
-    'node_modules/wrangler/bin/wrangler.js', 'dev', 'test/worker.ts', '--config', 'wrangler.ci.toml',
-    '--port', String(port), '--inspector-port', '0', '--persist-to', stateDirectory,
-    '--var', 'INGEST_SECRET:smoke-test-secret', '--var', 'SESSION_SECRET:local-session-test',
-    '--var', 'DISCORD_CLIENT_ID:123', '--var', 'DISCORD_CLIENT_SECRET:dummy', '--var', `TEST_RUN_ID:${runId}`,
-  ], { detached: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
-  server.stdout.on('data', (data: Buffer) => { logs += String(data); });
-  server.stderr.on('data', (data: Buffer) => { logs += String(data); });
-  for (let i = 0; i < 120; i++) {
-    if (server.exitCode !== null || server.signalCode !== null) throw new Error(logs);
-    try {
-      const response = await fetch(`${base}/__test/identity`, { signal: AbortSignal.timeout(1000) });
-      if (response.ok && (await readObject(response)).runId === runId) {
-        const cookieResponse = await fetch(`${base}/__test/cookie`);
-        assert.equal(cookieResponse.status, 200);
-        cookie = await cookieResponse.text();
-        return;
-      }
-    } catch {}
-    await setTimeout(250);
-  }
-  throw new Error(`Worker not ready: ${logs}`);
+  worker = await startWorker();
+  base = worker.base;
+  const cookieResponse = await fetch(`${base}/__test/cookie`);
+  assert.equal(cookieResponse.status, 200);
+  cookie = await cookieResponse.text();
 });
 after(async () => {
-  if (server?.pid && server.exitCode === null && server.signalCode === null) {
-    const exited = once(server, 'exit');
-    process.kill(-server.pid, 'SIGTERM');
-    await exited;
-  }
-  // 自分で作った一時ディレクトリだけを削除。既存 .wrangler/state には触れない。
-  if (stateDirectory) await rm(stateDirectory, { recursive: true, force: true });
+  await worker?.stop();
 });
 const request = (path: string, init?: RequestInit) => fetch(`${base}${path}`, init);
 const seed = (guild: string, role = '7001') => request(`/__test/seed?guild=${guild}&role=${role}`);
