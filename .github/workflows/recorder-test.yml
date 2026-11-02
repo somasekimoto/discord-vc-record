@@ -1,4 +1,4 @@
-# recorder のテスト(node:test)。ユニット(発話区間の結合・整形)と、
+# recorder のテスト(vitest)。ユニット(発話区間の結合・整形)と、
 # 擬似PCM+モックSTTでの pipeline 統合テストを実行する。
 # 統合テストは wav 切り出しに ffmpeg を使うためインストールする。
 name: recorder-test

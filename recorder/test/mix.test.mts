@@ -5,8 +5,7 @@
  *  - buildMixedAudio: m4a 生成まで通しで確認(ffmpeg 必須)
  */
 import type { Utterance } from '../src/types.ts';
-import test from 'node:test';
-import assert from 'node:assert/strict';
+import { assert, expect, test } from 'vitest';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,9 +19,9 @@ test('computeMixPlan: 発話が実時刻オフセットに配置され、総量�
   const plan = computeMixPlan(summary, [
     track(BYTES_PER_SEC, [{ startedAt: 2000, endedAt: 3000, byteStart: 0, byteEnd: BYTES_PER_SEC }]),
   ]);
-  assert.ok(plan);
-  assert.equal(plan.totalBytes, BYTES_PER_SEC * 10);
-  assert.deepEqual(plan.tracks[0].segments, [
+  assert(plan);
+  expect(plan.totalBytes).toBe(BYTES_PER_SEC * 10);
+  expect(plan.tracks[0].segments).toStrictEqual([
     { srcStart: 0, length: BYTES_PER_SEC, dstOffset: BYTES_PER_SEC * 2 },
   ]);
 });
@@ -31,7 +30,7 @@ test('computeMixPlan: 開始時刻が未確定なら epoch 起点で配置せず
   const plan = computeMixPlan({ startedAt: null, endedAt: 10_000 }, [
     track(BYTES_PER_SEC, [{ startedAt: 1_700_000_000_000, endedAt: 1_700_000_001_000, byteStart: 0, byteEnd: BYTES_PER_SEC }]),
   ]);
-  assert.equal(plan, null);
+  expect(plan).toBe(null);
 });
 
 test('computeMixPlan: セッション終了時刻を超える発話は総量を押し広げる', () => {
@@ -39,8 +38,8 @@ test('computeMixPlan: セッション終了時刻を超える発話は総量を�
   const plan = computeMixPlan(summary, [
     track(BYTES_PER_SEC * 2, [{ startedAt: 500, endedAt: 2500, byteStart: 0, byteEnd: BYTES_PER_SEC * 2 }]),
   ]);
-  assert.ok(plan);
-  assert.equal(plan.totalBytes, Math.round(BYTES_PER_SEC * 0.5) + BYTES_PER_SEC * 2);
+  assert(plan);
+  expect(plan.totalBytes).toBe(Math.round(BYTES_PER_SEC * 0.5) + BYTES_PER_SEC * 2);
 });
 
 test('computeMixPlan: byteEnd はファイルサイズへクランプ、範囲外の発話は落とす', () => {
@@ -53,9 +52,9 @@ test('computeMixPlan: byteEnd はファイルサイズへクランプ、範囲�
       { startedAt: 3000, endedAt: 4000, byteStart: BYTES_PER_SEC * 2, byteEnd: BYTES_PER_SEC * 3 },
     ]),
   ]);
-  assert.ok(plan);
-  assert.equal(plan.tracks[0].segments.length, 1);
-  assert.equal(plan.tracks[0].segments[0].length, BYTES_PER_SEC);
+  assert(plan);
+  expect(plan.tracks[0].segments.length).toBe(1);
+  expect(plan.tracks[0].segments[0].length).toBe(BYTES_PER_SEC);
 });
 
 test('computeMixPlan: オフセットは常にサンプルフレーム(4バイト)境界に揃う', () => {
@@ -64,17 +63,17 @@ test('computeMixPlan: オフセットは常にサンプルフレーム(4バイ�
     // 1ms = 192バイト相当だが、7ms 等の中途半端な時刻でも 4 の倍数に丸まる
     track(BYTES_PER_SEC, [{ startedAt: 7, endedAt: 1007, byteStart: 2, byteEnd: BYTES_PER_SEC - 2 }]),
   ]);
-  assert.ok(plan);
+  assert(plan);
   const seg = plan.tracks[0].segments[0];
-  assert.equal(seg.dstOffset % 4, 0);
-  assert.equal(seg.srcStart % 4, 0);
-  assert.equal(seg.length % 4, 0);
+  expect(seg.dstOffset % 4).toBe(0);
+  expect(seg.srcStart % 4).toBe(0);
+  expect(seg.length % 4).toBe(0);
 });
 
 test('computeMixPlan: 配置できる発話が1つも無ければ null(utterances 未記録の旧録音)', () => {
   const summary = { startedAt: 0, endedAt: 10_000 };
-  assert.equal(computeMixPlan(summary, [track(BYTES_PER_SEC, [])]), null);
-  assert.equal(computeMixPlan(summary, []), null);
+  expect(computeMixPlan(summary, [track(BYTES_PER_SEC, [])])).toBe(null);
+  expect(computeMixPlan(summary, [])).toBe(null);
 });
 
 /** 指定秒数の一定値 PCM(s16le 48k stereo)。合算検証を単純にするためトーンではなく定数 */
@@ -105,16 +104,16 @@ test('writeMixedPcm: 実時間軸に配置され、同時発話は合算・無�
       track(BYTES_PER_SEC, [{ startedAt: 1500, endedAt: 2500, byteStart: 0, byteEnd: BYTES_PER_SEC }], bPath),
     ]);
     const outPath = join(dir, 'mixed.pcm');
-    assert.ok(plan);
+    assert(plan);
     await writeMixedPcm(plan, outPath);
 
     const mixed = await readFile(outPath);
-    assert.equal(mixed.length, BYTES_PER_SEC * 4); // セッション長 = 4秒
-    assert.equal(sampleAt(mixed, 0.5), 0);         // 発話前は無音
-    assert.equal(sampleAt(mixed, 1.25), 1000);     // A のみ
-    assert.equal(sampleAt(mixed, 1.75), 3000);     // A + B の重なり
-    assert.equal(sampleAt(mixed, 2.25), 2000);     // B のみ
-    assert.equal(sampleAt(mixed, 3.5), 0);         // 発話後も無音
+    expect(mixed.length).toBe(BYTES_PER_SEC * 4); // セッション長 = 4秒
+    expect(sampleAt(mixed, 0.5)).toBe(0);         // 発話前は無音
+    expect(sampleAt(mixed, 1.25)).toBe(1000);     // A のみ
+    expect(sampleAt(mixed, 1.75)).toBe(3000);     // A + B の重なり
+    expect(sampleAt(mixed, 2.25)).toBe(2000);     // B のみ
+    expect(sampleAt(mixed, 3.5)).toBe(0);         // 発話後も無音
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -135,11 +134,11 @@ test('writeMixedPcm: 合算は int16 でクリップされる', async () => {
       track(half, [{ startedAt: 0, endedAt: 500, byteStart: 0, byteEnd: half }], bPath),
     ]);
     const outPath = join(dir, 'mixed.pcm');
-    assert.ok(plan);
+    assert(plan);
     await writeMixedPcm(plan, outPath);
 
     const mixed = await readFile(outPath);
-    assert.equal(sampleAt(mixed, 0.25), 32767); // 20000+20000 → クリップ
+    expect(sampleAt(mixed, 0.25)).toBe(32767); // 20000+20000 → クリップ
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -158,13 +157,13 @@ test('buildMixedAudio: m4a が生成され durationSec がセッション長に�
     const outPath = join(dir, 'mixed.m4a');
     const result = await buildMixedAudio(summary, tracks, outPath);
 
-    assert.ok(result);
-    assert.equal(result.path, outPath);
-    assert.equal(result.durationSec, 4);
+    assert(result);
+    expect(result.path).toBe(outPath);
+    expect(result.durationSec).toBe(4);
     const { size } = await stat(outPath);
-    assert.ok(size > 0, 'mixed.m4a が空');
+    expect(size > 0, 'mixed.m4a が空').toBeTruthy();
     // 中間 PCM は消えている
-    await assert.rejects(stat(`${outPath}.tmp.pcm`));
+    await expect(stat(`${outPath}.tmp.pcm`)).rejects.toThrow();
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -175,8 +174,8 @@ test('buildMixedAudio: 配置できる発話が無ければ null を返しファ
   try {
     const summary = { startedAt: 0, endedAt: 4000 };
     const outPath = join(dir, 'mixed.m4a');
-    assert.equal(await buildMixedAudio(summary, [track(BYTES_PER_SEC, [])], outPath), null);
-    await assert.rejects(stat(outPath));
+    expect(await buildMixedAudio(summary, [track(BYTES_PER_SEC, [])], outPath)).toBe(null);
+    await expect(stat(outPath)).rejects.toThrow();
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

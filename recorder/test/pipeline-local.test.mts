@@ -6,8 +6,7 @@
  * 失敗区間が「（文字起こし失敗: …）」として時系列に残ることを確認する。
  * ffmpeg が必要(切り出しは実行される)。
  */
-import test from 'node:test';
-import assert from 'node:assert/strict';
+import { assert, expect, test } from 'vitest';
 import { stat } from 'node:fs/promises';
 import { makeSession, BYTES_PER_SEC } from './helpers.mts';
 
@@ -43,38 +42,35 @@ test('STT が失敗しても時系列の議事録が生成される', async () =
     const { markdown, minutes, files, upload } = await runPipeline(summary, tracks);
 
     // 発話は話者をまたいで開始時刻順に並ぶ
-    assert.deepEqual(
-      minutes.utterances.map((u) => `${u.displayName}@${u.startedAt - t0}`),
-      ['Alice@1000', 'Bob@3000', 'Alice@5000'],
-    );
+    expect(minutes.utterances.map((u) => `${u.displayName}@${u.startedAt - t0}`)).toStrictEqual(['Alice@1000', 'Bob@3000', 'Alice@5000']);
     // 全区間 STT 失敗でも各発話が失敗表記で時系列に残る
     for (const u of minutes.utterances) {
-      assert.match(u.text, /文字起こし失敗/);
+      expect(u.text).toMatch(/文字起こし失敗/);
     }
 
     // Markdown は会話ログ形式
-    assert.match(markdown, /## 会話ログ/);
-    assert.match(markdown, /\*\*\[0:01\] Alice\*\*:/);
-    assert.match(markdown, /\*\*\[0:03\] Bob\*\*:/);
-    assert.match(markdown, /\*\*\[0:05\] Alice\*\*:/);
+    expect(markdown).toMatch(/## 会話ログ/);
+    expect(markdown).toMatch(/\*\*\[0:01\] Alice\*\*:/);
+    expect(markdown).toMatch(/\*\*\[0:03\] Bob\*\*:/);
+    expect(markdown).toMatch(/\*\*\[0:05\] Alice\*\*:/);
     // 時系列に載ったので旧方式のフォールバックセクションは出ない
-    assert.doesNotMatch(markdown, /話者別（時刻情報なし）/);
+    expect(markdown).not.toMatch(/話者別（時刻情報なし）/);
 
     // speakers は web(ingest/upload)が参照するため後方互換の形を維持する
-    assert.equal(minutes.speakers.length, 2);
+    expect(minutes.speakers.length).toBe(2);
     for (const s of minutes.speakers) {
       for (const k of ['userId', 'displayName', 'durationSec', 'text', 'engine']) {
-        assert.ok(k in s, `speakers[].${k} が無い`);
+        expect(k in s, `speakers[].${k} が無い`).toBeTruthy();
       }
     }
 
     // 会話全体のミックス音声も生成される
-    assert.ok(files.mixedPath);
-    assert.ok(files.mixedPath.endsWith('mixed.m4a'));
-    assert.ok((await stat(files.mixedPath)).size > 0, 'mixed.m4a が空');
+    assert(files.mixedPath);
+    expect(files.mixedPath.endsWith('mixed.m4a')).toBeTruthy();
+    expect((await stat(files.mixedPath)).size > 0, 'mixed.m4a が空').toBeTruthy();
 
     // WEB_BASE_URL 未設定なので upload はスキップ
-    assert.equal(upload.uploaded, false);
+    expect(upload.uploaded).toBe(false);
   } finally {
     await cleanup();
   }
@@ -88,13 +84,13 @@ test('発話区間情報が無いトラックは旧方式(話者別セクショ�
   try {
     const { markdown, minutes, files } = await runPipeline(summary, tracks);
 
-    assert.equal(minutes.utterances.length, 0);
+    expect(minutes.utterances.length).toBe(0);
     // 実時刻が無いのでミックスは作れない
-    assert.equal(files.mixedPath, null);
-    assert.match(markdown, /## 話者別（時刻情報なし）/);
-    assert.match(markdown, /### Alice/);
+    expect(files.mixedPath).toBe(null);
+    expect(markdown).toMatch(/## 話者別（時刻情報なし）/);
+    expect(markdown).toMatch(/### Alice/);
     // speakers にはトラック全体一括の結果(ここでは失敗表記)が入る
-    assert.match(minutes.speakers[0].text, /文字起こし失敗/);
+    expect(minutes.speakers[0].text).toMatch(/文字起こし失敗/);
   } finally {
     await cleanup();
   }

@@ -8,8 +8,7 @@
  * 実行: cd web && pnpm run test:contract
  * (recorder の依存は不要。upload.ts は Node 組み込みだけを使う)
  */
-import { before, after, test } from 'node:test';
-import assert from 'node:assert/strict';
+import { afterAll, beforeAll, expect, test } from 'vitest';
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -82,7 +81,7 @@ async function relay(target: string, req: IncomingMessage, res: ServerResponse) 
   res.writeHead(upstream.status, { 'Content-Type': upstream.headers.get('Content-Type') ?? 'text/plain' }).end(payload);
 }
 
-before(async () => {
+beforeAll(async () => {
   worker = await startWorker();
   const target = worker.base;
   proxy = createServer((req, res) => {
@@ -107,12 +106,12 @@ before(async () => {
     method: 'POST', headers: { Authorization: `Bearer ${INGEST_SECRET}` },
     body: JSON.stringify({ guildId: GUILD, requiredRoleId: '7001' }),
   });
-  assert.equal(config.status, 200);
+  expect(config.status).toBe(200);
   cookie = await (await fetch(`${target}/__test/cookie`)).text();
   workDir = await mkdtemp(join(tmpdir(), 'vc-contract-'));
 });
 
-after(async () => {
+afterAll(async () => {
   env.base == null ? delete process.env.WEB_BASE_URL : process.env.WEB_BASE_URL = env.base;
   env.secret == null ? delete process.env.INGEST_SECRET : process.env.INGEST_SECRET = env.secret;
   if (proxy) await new Promise<void>((resolve) => proxy!.close(() => resolve()));
@@ -158,10 +157,10 @@ async function tracks(sessionId: string) {
 async function assertDelivered(sessionId: string, content: Awaited<ReturnType<typeof recording>>['content']) {
   for (const [kind, expected] of [['md', content.md], ['json', content.json], [`audio-${SPEAKER}`, content.wav], ['audio-mixed', content.mixed]] as const) {
     const response = await download(sessionId, kind);
-    assert.equal(response.status, 200, `${kind} DL`);
-    assert.ok(Buffer.from(await response.arrayBuffer()).equals(expected), `${kind} の内容が送信元と一致する`);
+    expect(response.status, `${kind} DL`).toBe(200);
+    expect(Buffer.from(await response.arrayBuffer()).equals(expected), `${kind} の内容が送信元と一致する`).toBeTruthy();
   }
-  assert.deepEqual(await tracks(sessionId), [
+  expect(await tracks(sessionId)).toStrictEqual([
     { user_id: SPEAKER, r2_key: `sessions/${GUILD}/${sessionId}/audio/${SPEAKER}.wav`, duration_sec: 37 },
     // mixed の長さは recorder が endedAt - startedAt から算出する
     { user_id: 'mixed', r2_key: `sessions/${GUILD}/${sessionId}/audio/mixed.m4a`, duration_sec: 42 },
@@ -178,14 +177,14 @@ test('契約: 40MiB 超の話者 wav・mixed・文字起こしが分割送信さ
   const sessionId = 'contract-ok';
   const { minutes, files, content } = await recording(sessionId, BIG);
   const result = await uploadToWeb(minutes, files);
-  assert.deepEqual(result, { uploaded: true, sessionId, viewUrl: `${proxyBase}/s/${sessionId}` });
+  expect(result).toStrictEqual({ uploaded: true, sessionId, viewUrl: `${proxyBase}/s/${sessionId}` });
   const speakerParts = exchanges.filter((e) => e.path === '/ingest/audio/part' && e.userId === SPEAKER);
-  assert.deepEqual(speakerParts.map((e) => e.status), [200, 200]);
-  assert.ok(exchanges.every((e) => e.status === 200), JSON.stringify(exchanges));
+  expect(speakerParts.map((e) => e.status)).toStrictEqual([200, 200]);
+  expect(exchanges.every((e) => e.status === 200), JSON.stringify(exchanges)).toBeTruthy();
   await assertDelivered(sessionId, content);
   const detail = await (await fetch(`${worker!.base}/s/${sessionId}`, { headers: { Cookie: cookie } })).text();
-  assert.match(detail, /契約テスト話者/);
-  assert.match(detail, /contract-vc/);
+  expect(detail).toMatch(/契約テスト話者/);
+  expect(detail).toMatch(/contract-vc/);
 });
 
 test('契約: complete の応答喪失は recorder の再送を Worker が冪等に受け、トラックは重複しない', async () => {
@@ -200,11 +199,11 @@ test('契約: complete の応答喪失は recorder の再送を Worker が冪等
   const sessionId = 'contract-lost-complete';
   const { minutes, files, content } = await recording(sessionId, 1024);
   const result = await uploadToWeb(minutes, files);
-  assert.equal(result.uploaded, true, String(result.reason));
+  expect(result.uploaded, String(result.reason)).toBe(true);
   const completes = exchanges.filter((e) => e.path === '/ingest/audio/complete' && e.userId === SPEAKER);
   // 1 回目は Worker で完了済み(応答だけ喪失)、2 回目は alreadyCompleted の 200
-  assert.deepEqual(completes.map((e) => [e.status, e.fault]), [[200, true], [200, false]]);
-  assert.equal(exchanges.filter((e) => e.path === '/ingest/audio/abort').length, 0);
+  expect(completes.map((e) => [e.status, e.fault])).toStrictEqual([[200, true], [200, false]]);
+  expect(exchanges.filter((e) => e.path === '/ingest/audio/abort').length).toBe(0);
   await assertDelivered(sessionId, content);
 });
 
@@ -213,15 +212,15 @@ test('契約: 音声の部分失敗は abort して他を続行し、同じ保�
   const sessionId = 'contract-partial';
   const { minutes, files, content } = await recording(sessionId, 1024);
   const failed = await uploadToWeb(minutes, files);
-  assert.equal(failed.uploaded, false);
+  expect(failed.uploaded).toBe(false);
   // 文字起こしは届いているので WebUI の URL は残る(pipeline はこの結果で PCM を残す)
-  assert.equal(failed.viewUrl, `${proxyBase}/s/${sessionId}`);
-  assert.match(String(failed.reason), new RegExp(`${SPEAKER}: audio part 400`));
+  expect(failed.viewUrl).toBe(`${proxyBase}/s/${sessionId}`);
+  expect(String(failed.reason)).toMatch(new RegExp(`${SPEAKER}: audio part 400`));
   const aborts = exchanges.filter((e) => e.path === '/ingest/audio/abort');
-  assert.deepEqual(aborts.map((e) => [e.userId, e.status, e.fault]), [[SPEAKER, 200, false]]);
-  assert.equal((await download(sessionId, `audio-${SPEAKER}`)).status, 404);
-  assert.equal((await download(sessionId, 'audio-mixed')).status, 200);
-  assert.deepEqual(await tracks(sessionId), [
+  expect(aborts.map((e) => [e.userId, e.status, e.fault])).toStrictEqual([[SPEAKER, 200, false]]);
+  expect((await download(sessionId, `audio-${SPEAKER}`)).status).toBe(404);
+  expect((await download(sessionId, 'audio-mixed')).status).toBe(200);
+  expect(await tracks(sessionId)).toStrictEqual([
     { user_id: SPEAKER, r2_key: null, duration_sec: 37 },
     { user_id: 'mixed', r2_key: `sessions/${GUILD}/${sessionId}/audio/mixed.m4a`, duration_sec: 42 },
   ]);
@@ -229,6 +228,6 @@ test('契約: 音声の部分失敗は abort して他を続行し、同じ保�
   // reupload.ts と同じく、保存済みの同じファイルで uploadToWeb をやり直す
   reset();
   const retried = await uploadToWeb(minutes, files);
-  assert.equal(retried.uploaded, true, String(retried.reason));
+  expect(retried.uploaded, String(retried.reason)).toBe(true);
   await assertDelivered(sessionId, content);
 });

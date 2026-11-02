@@ -11,5 +11,5 @@
     "types": ["node"],
     "allowJs": false
   },
-  "include": ["src/**/*.ts", "test/**/*.mts"]
+  "include": ["src/**/*.ts", "test/**/*.mts", "vitest.config.ts"]
 }

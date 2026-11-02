@@ -12,7 +12,7 @@ pnpm test
 pnpm exec wrangler deploy --config wrangler.ci.toml --dry-run
 ```
 
-`pnpm test` は `node:test` が空きポートにWrangler子プロセスを起動し、実行ごとの `TEST_RUN_ID` をreadinessで照合してからHTTP回帰を実行する。D1スキーマは `schema.sql` から専用の一時保存先へ適用し、R2も同じ保存先を使う。終了時にプロセスグループを停止して自分の一時ディレクトリだけを破棄する。既存 `.wrangler/state` や並列実行中のfixtureには触れない。smokeは `wrangler dev` 既定の保存先（`.wrangler/state`）を使う。
+`pnpm test` は vitest（`vitest.config.ts` の `test` プロジェクト）が空きポートにWrangler子プロセスを起動し、実行ごとの `TEST_RUN_ID` をreadinessで照合してからHTTP回帰を実行する。D1スキーマは `schema.sql` から専用の一時保存先へ適用し、R2も同じ保存先を使う。終了時にプロセスグループを停止して自分の一時ディレクトリだけを破棄する。既存 `.wrangler/state` や並列実行中のfixtureには触れない。smokeは `wrangler dev` 既定の保存先（`.wrangler/state`）を使う。
 
 追加の取り込み検証:
 
@@ -33,7 +33,7 @@ cd web
 pnpm run test:contract
 ```
 
-`test/recorder-contract.mts` は recorder の実 uploader（`recorder/src/upload.ts` の `uploadToWeb`）を、`pnpm test` と同じ方法で起動した一時ローカルWorker（D1/R2）へ接続する。recorder の依存インストールは不要（`upload.ts` はNode組み込みだけを使う）。間に置いた中継プロキシで障害を注入し、次を確認する。
+`pnpm run test:contract` は同じ設定の `contract` プロジェクトを実行する。`test/recorder-contract.mts` は recorder の実 uploader（`recorder/src/upload.ts` の `uploadToWeb`）を、`pnpm test` と同じ方法で起動した一時ローカルWorker（D1/R2）へ接続する。recorder の依存インストールは不要（`upload.ts` はNode組み込みだけを使う）。間に置いた中継プロキシで障害を注入し、次を確認する。
 
 - 40MiB超の話者wav（2パート）・mixed・文字起こしが届き、D1のtracks/表示とR2の配信内容が送信元と一致する
 - completeの応答喪失：Worker側は完了済みのまま、recorderの再送が `alreadyCompleted` で成功し、行が重複しない

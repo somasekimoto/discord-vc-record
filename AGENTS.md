@@ -16,12 +16,12 @@ Keep generated recordings, real `.env` files, `fly.toml`, and `wrangler.toml` ou
 - `cd recorder && pnpm run register`: register Discord slash commands.
 - `cd recorder && pnpm run start`: run the bot locally with `.env` configuration.
 - `cd recorder && pnpm run typecheck`: strict TypeScript checks for all recorder source and tests (no build output).
-- `cd recorder && pnpm test`: run Node's built-in test runner over `test/*.test.mts`.
+- `cd recorder && pnpm test`: run Vitest (`vitest run`) over `test/*.test.mts`. Run one file with `pnpm exec vitest run test/<name>.test.mts`.
 - `cd web && pnpm install`: install Wrangler for Worker development.
 - `cd web && pnpm run dev`: start `wrangler dev`.
 - `cd web && pnpm run deploy`: deploy the Worker.
 - `cd web && pnpm run typecheck`: generate Worker types from `wrangler.ci.toml` and run strict TypeScript checks.
-- `cd web && pnpm test`: run HTTP regression tests against a throwaway local Worker (no secrets or Cloudflare account needed).
+- `cd web && pnpm test`: run HTTP regression tests (Vitest project `test`) against a throwaway local Worker (no secrets or Cloudflare account needed).
 - `cd web && node test/smoke.mts`: run the ingest smoke test against a local Worker after applying `schema.sql` and starting Wrangler, both with `--config wrangler.ci.toml`, exactly as documented in the test header.
 
 ## Coding Style & Naming Conventions
@@ -30,7 +30,7 @@ Use ESM `import`/`export`, two-space indentation, semicolons, and single quotes.
 
 ## Testing Guidelines
 
-Recorder tests use `node:test` and `node:assert/strict`. Add focused tests beside related behavior in `recorder/test/`. Web coverage is `web/test/routes.test.mts` (auth, authorization, listing, downloads) plus `web/test/smoke.mts` (ingest); update them when ingest, auth, D1, or R2 flows change. `web/test/recorder-contract.mts` (`cd web && pnpm run test:contract`) connects the real recorder uploader to a local Worker; update it when the upload/ingest contract or retry behavior changes. See `web/TESTING.md`. For large upload behavior, use `SMOKE_BIG=1 node test/smoke.mts`.
+Tests use Vitest (`test`, `expect`, `beforeAll`/`afterAll`, `onTestFinished`, `vi`); use Vitest's `assert` only where TypeScript needs narrowing. Each package has its own `vitest.config.ts`; `recorder/test/index-boot-child.mts` is a plain Node child process and intentionally keeps `node:test`'s `mock.module`. Add focused tests beside related behavior in `recorder/test/`. Web coverage is `web/test/routes.test.mts` (auth, authorization, listing, downloads) plus `web/test/smoke.mts` (ingest); update them when ingest, auth, D1, or R2 flows change. `web/test/recorder-contract.mts` (`cd web && pnpm run test:contract`, Vitest project `contract`) connects the real recorder uploader to a local Worker; update it when the upload/ingest contract or retry behavior changes. See `web/TESTING.md`. For large upload behavior, use `SMOKE_BIG=1 node test/smoke.mts`.
 
 ## Commit & Pull Request Guidelines
 

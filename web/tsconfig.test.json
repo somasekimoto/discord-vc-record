@@ -11,5 +11,5 @@
     "verbatimModuleSyntax": true,
     "erasableSyntaxOnly": true
   },
-  "include": ["test/**/*.mts"]
+  "include": ["test/**/*.mts", "vitest.config.ts"]
 }

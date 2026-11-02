@@ -3,8 +3,7 @@
  * 停止経路(自動停止/ボタン/コマンド)が同時に stop を呼んでも、
  * 成功するのは先着の1つだけで pipeline が二重実行されないことを検証する。
  */
-import test from 'node:test';
-import assert from 'node:assert/strict';
+import { assert, expect, test } from 'vitest';
 import { Client } from 'discord.js';
 import { SessionManager, NoActiveSessionError, RecordingSession } from '../src/recorder.ts';
 
@@ -34,23 +33,23 @@ test('stop の同時呼び出しは先着だけが成功し、後着は「進行
 
   const [a, b] = await Promise.allSettled([mgr.stop('g1'), mgr.stop('g1')]);
 
-  assert.equal(a.status, 'fulfilled');
-  assert.equal(a.value.tracks.length, 1);
-  assert.equal(b.status, 'rejected');
-  assert.ok(b.reason instanceof NoActiveSessionError); // 競合負けは typed error で判定できる
-  assert.match(b.reason.message, /進行中の録音はありません/);
-  assert.equal(session.stopCalls, 1); // セッション自体の stop も1回だけ
-  assert.equal(mgr.byGuild.size, 0);
+  assert(a.status === 'fulfilled');
+  expect(a.value.tracks.length).toBe(1);
+  assert(b.status === 'rejected');
+  expect(b.reason).toBeInstanceOf(NoActiveSessionError); // 競合負けは typed error で判定できる
+  expect(b.reason.message).toMatch(/進行中の録音はありません/);
+  expect(session.stopCalls).toBe(1); // セッション自体の stop も1回だけ
+  expect(mgr.byGuild.size).toBe(0);
 });
 
 test('未開始セッションの stop は nullable な旧 snapshot を返す', async () => {
   const session = new RecordingSession({ client: new Client({ intents: [] }), baseDir: '/tmp', guildId: 'g1', channelId: 'c1', startedByUserId: 'u1' });
   const summary = await session.stop();
-  assert.equal(summary.startedAt, null);
-  assert.equal(summary.endedAt, null);
-  assert.equal(session.status, 'idle');
-  assert.equal(summary.startedByUserId, 'u1');
-  assert.equal('startedBy' in summary, false);
+  expect(summary.startedAt).toBe(null);
+  expect(summary.endedAt).toBe(null);
+  expect(session.status).toBe('idle');
+  expect(summary.startedByUserId).toBe('u1');
+  expect('startedBy' in summary).toBe(false);
 });
 
 test('stop 中は get がセッションを返さない(status 表示や自動停止の誤作動防止)', async () => {
@@ -58,6 +57,6 @@ test('stop 中は get がセッションを返さない(status 表示や自動�
   mgr.byGuild.set('g1', makeSlowSession());
 
   const stopping = mgr.stop('g1');
-  assert.equal(mgr.get('g1'), undefined); // await 前に登録が外れている
+  expect(mgr.get('g1')).toBe(undefined); // await 前に登録が外れている
   await stopping;
 });

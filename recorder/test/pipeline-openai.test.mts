@@ -5,8 +5,7 @@
  * 期待の長さで送られてくること・結合で呼び出し数が減ること・
  * 時系列 Markdown が正しく組まれることを確認する。ffmpeg が必要。
  */
-import test from 'node:test';
-import assert from 'node:assert/strict';
+import { afterAll, assert, expect, test } from 'vitest';
 import { createServer } from 'node:http';
 import { makeSession, BYTES_PER_SEC } from './helpers.mts';
 
@@ -27,13 +26,13 @@ await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
 process.env.STT_PROVIDER = 'openai';
 process.env.OPENAI_API_KEY = 'sk-test-dummy';
 const address = server.address();
-assert.ok(address && typeof address === 'object');
+assert(address && typeof address === 'object');
 process.env.OPENAI_BASE_URL = `http://127.0.0.1:${address.port}/v1`;
 delete process.env.WEB_BASE_URL;
 
 const { process: runPipeline } = await import('../src/pipeline.ts');
 
-test.after(() => server.close());
+afterAll(() => server.close());
 
 test('正常系: 結合・短小スキップ・時系列マージ・切り出し音声長', async () => {
   const { summary, tracks, t0, cleanup } = await makeSession([
@@ -64,29 +63,26 @@ test('正常系: 結合・短小スキップ・時系列マージ・切り出し
     const { markdown, minutes } = await runPipeline(summary, tracks);
 
     // 結合により STT 呼び出しは Alice 1回 + Bob 1回 = 計2回
-    assert.equal(calls.length, 2);
+    expect(calls.length).toBe(2);
 
     // 発話は Alice(結合済み) → Bob の時刻順。短小区間は落ちる
-    assert.deepEqual(
-      minutes.utterances.map((u) => `${u.displayName}@${u.startedAt - t0}`),
-      ['Alice@1000', 'Bob@10000'],
-    );
+    expect(minutes.utterances.map((u) => `${u.displayName}@${u.startedAt - t0}`)).toStrictEqual(['Alice@1000', 'Bob@10000']);
     // 結合区間の endedAt は後半の発話の終了時刻
-    assert.equal(minutes.utterances[0].endedAt, t0 + 3800);
+    expect(minutes.utterances[0].endedAt).toBe(t0 + 3800);
 
     // Markdown に STT の返答テキストが時系列で載る
-    assert.match(markdown, /\*\*\[0:01\] Alice\*\*: 発話/);
-    assert.match(markdown, /\*\*\[0:10\] Bob\*\*: 発話/);
+    expect(markdown).toMatch(/\*\*\[0:01\] Alice\*\*: 発話/);
+    expect(markdown).toMatch(/\*\*\[0:10\] Bob\*\*: 発話/);
 
     // Alice の結合区間の切り出し音声は発話2秒+パディング(最大0.25s、multipart外皮込みで概算)
     const largest = Math.max(...calls.map((c) => c.size));
     const approxSec = largest / BYTES_PER_SEC;
-    assert.ok(approxSec > 1.9 && approxSec < 2.8, `結合区間の音声長が想定外: ${approxSec.toFixed(2)}s`);
+    expect(approxSec > 1.9 && approxSec < 2.8, `結合区間の音声長が想定外: ${approxSec.toFixed(2)}s`).toBeTruthy();
 
     // speakers[].text は本人の発話テキストの連結
     const alice = minutes.speakers.find((s) => s.userId === '111');
-    assert.ok(alice);
-    assert.match(alice.text, /発話/);
+    assert(alice);
+    expect(alice.text).toMatch(/発話/);
   } finally {
     await cleanup();
   }
