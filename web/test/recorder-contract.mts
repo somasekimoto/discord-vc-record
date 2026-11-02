@@ -15,7 +15,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { IncomingMessage, Server } from 'node:http';
+import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 
 import { uploadToWeb } from '../../recorder/src/upload.ts';
 import type { Minutes, UploadFiles } from '../../recorder/src/types.ts';
@@ -46,41 +46,53 @@ async function readBody(req: IncomingMessage) {
   return Buffer.concat(chunks);
 }
 
+/** recorder → Worker の中継。injector の指示で失敗の注入・応答の破棄を行う。 */
+async function relay(target: string, req: IncomingMessage, res: ServerResponse) {
+  const url = new URL(req.url!, 'http://proxy');
+  const userId = url.searchParams.get('userId');
+  const body = await readBody(req);
+  // init/complete/abort の userId は JSON body にある
+  let bodyUserId = userId;
+  if (!bodyUserId && req.headers['content-type'] === 'application/json') {
+    try { bodyUserId = (JSON.parse(body.toString()) as { userId?: string }).userId ?? null; } catch {}
+  }
+  const fault = injector(url.pathname, bodyUserId);
+  if (fault && fault !== 'drop-response') {
+    // Worker へ届けずに失敗を返す
+    exchanges.push({ method: req.method!, path: url.pathname, userId: bodyUserId, status: fault.status, fault: true });
+    res.writeHead(fault.status).end('injected failure');
+    return;
+  }
+  const headers: Record<string, string> = {};
+  for (const name of ['authorization', 'content-type']) {
+    const value = req.headers[name];
+    if (typeof value === 'string') headers[name] = value;
+  }
+  const upstream = await fetch(`${target}${url.pathname}${url.search}`, {
+    method: req.method, headers, body: req.method === 'GET' ? undefined : body,
+    signal: AbortSignal.timeout(60_000),
+  });
+  const payload = Buffer.from(await upstream.arrayBuffer());
+  exchanges.push({ method: req.method!, path: url.pathname, userId: bodyUserId, status: upstream.status, fault: fault === 'drop-response' });
+  if (fault === 'drop-response') {
+    // Worker は処理済みだが recorder には応答が届かない(レスポンス喪失)
+    res.socket?.destroy();
+    return;
+  }
+  res.writeHead(upstream.status, { 'Content-Type': upstream.headers.get('Content-Type') ?? 'text/plain' }).end(payload);
+}
+
 before(async () => {
   worker = await startWorker();
   const target = worker.base;
-  proxy = createServer(async (req, res) => {
-    const url = new URL(req.url!, 'http://proxy');
-    const userId = url.searchParams.get('userId');
-    const body = await readBody(req);
-    // init/complete/abort の userId は JSON body にある
-    let bodyUserId = userId;
-    if (!bodyUserId && req.headers['content-type'] === 'application/json') {
-      try { bodyUserId = (JSON.parse(body.toString()) as { userId?: string }).userId ?? null; } catch {}
-    }
-    const fault = injector(url.pathname, bodyUserId);
-    if (fault && fault !== 'drop-response') {
-      // Worker へ届けずに失敗を返す
-      exchanges.push({ method: req.method!, path: url.pathname, userId: bodyUserId, status: fault.status, fault: true });
-      res.writeHead(fault.status).end('injected failure');
-      return;
-    }
-    const headers: Record<string, string> = {};
-    for (const name of ['authorization', 'content-type']) {
-      const value = req.headers[name];
-      if (typeof value === 'string') headers[name] = value;
-    }
-    const upstream = await fetch(`${target}${url.pathname}${url.search}`, {
-      method: req.method, headers, body: req.method === 'GET' ? undefined : body,
+  proxy = createServer((req, res) => {
+    relay(target, req, res).catch((error: unknown) => {
+      // Worker の停止・無応答を recorder のタイムアウト待ちにせず、原因付きの 502 で即座に返す
+      const message = error instanceof Error ? error.message : String(error);
+      exchanges.push({ method: req.method!, path: req.url!, userId: null, status: 502, fault: false });
+      if (res.headersSent) return res.destroy();
+      res.writeHead(502).end(`proxy upstream error: ${message}\n${worker?.logs().slice(-2000) ?? ''}`);
     });
-    const payload = Buffer.from(await upstream.arrayBuffer());
-    exchanges.push({ method: req.method!, path: url.pathname, userId: bodyUserId, status: upstream.status, fault: fault === 'drop-response' });
-    if (fault === 'drop-response') {
-      // Worker は処理済みだが recorder には応答が届かない(レスポンス喪失)
-      res.socket?.destroy();
-      return;
-    }
-    res.writeHead(upstream.status, { 'Content-Type': upstream.headers.get('Content-Type') ?? 'text/plain' }).end(payload);
   });
   await new Promise<void>((resolve) => proxy!.listen(0, '127.0.0.1', resolve));
   const address = proxy.address();
