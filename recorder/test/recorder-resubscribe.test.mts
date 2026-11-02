@@ -7,8 +7,7 @@
  * 二度と購読されず、「録音開始前から VC にいた人の声が丸ごと欠ける」不具合になった。
  */
 import { Client } from 'discord.js';
-import test from 'node:test';
-import assert from 'node:assert/strict';
+import { assert, expect, test } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { mkdtemp, mkdir } from 'node:fs/promises';
@@ -47,25 +46,21 @@ test('ストリームエラー後、次の speaking start で再購読され録�
   const { session, subscribed } = await makeSession();
 
   session._onSpeakingStart('user1');
-  assert.equal(subscribed.length, 1, '最初の speaking start で購読される');
+  expect(subscribed.length, '最初の speaking start で購読される').toBe(1);
   const st = session.trackStates.get('user1');
-  assert.ok(st, 'トラック state が作られる');
+  assert(st, 'トラック state が作られる');
 
   // DAVE 復号失敗 → ライブラリが stream.destroy(error) するのを再現
   subscribed[0].destroy(new Error('decrypt failed'));
   await Promise.allSettled([...session.pendingPipelines]);
 
-  assert.equal(session.activeStreams.has('user1'), false, 'エラー後は再購読可能に戻る');
-  assert.equal(session.subscriptions.has('user1'), false, '死んだ購読は破棄される');
+  expect(session.activeStreams.has('user1'), 'エラー後は再購読可能に戻る').toBe(false);
+  expect(session.subscriptions.has('user1'), '死んだ購読は破棄される').toBe(false);
 
   // 次の発話バーストで再購読される
   session._onSpeakingStart('user1');
-  assert.equal(subscribed.length, 2, 'エラー後の speaking start で再購読される');
-  assert.strictEqual(
-    session.trackStates.get('user1'),
-    st,
-    '再購読でトラック state(bytes/utterances)がリセットされない',
-  );
+  expect(subscribed.length, 'エラー後の speaking start で再購読される').toBe(2);
+  expect(session.trackStates.get('user1'), '再購読でトラック state(bytes/utterances)がリセットされない').toBe(st);
 
   await session.stop();
 });
@@ -81,11 +76,11 @@ test('タイマー発火前に本物の speaking start が来ても二重購読�
 
   // 再購読タイマー(200ms)より先に本物の speaking start が到着
   session._onSpeakingStart('user1');
-  assert.equal(subscribed.length, 2);
+  expect(subscribed.length).toBe(2);
 
   // タイマーが発火しても activeStreams ガードにより追加購読されない
   await new Promise((r) => setTimeout(r, 300));
-  assert.equal(subscribed.length, 2, 'タイマー発火で二重購読されない');
+  expect(subscribed.length, 'タイマー発火で二重購読されない').toBe(2);
 
   await session.stop();
 });
@@ -95,19 +90,19 @@ test('発話途中でストリームが死んだら区間を閉じ、無記録�
 
   session._onSpeakingStart('user1');
   const st = session.trackStates.get('user1');
-  assert.ok(st);
-  assert.ok(st.current, '発話区間が開いている');
+  assert(st);
+  expect(st.current, '発話区間が開いている').toBeTruthy();
 
   subscribed[0].destroy(new Error('decrypt failed'));
   await Promise.allSettled([...session.pendingPipelines]);
 
-  assert.equal(st.current, null, 'エラー時点で発話区間が閉じられる');
-  assert.equal(st.utterances.length, 1, '閉じた区間は utterances に記録される');
-  assert.equal(st.streamErrors, 1, '連続失敗カウンタが増える');
+  expect(st.current, 'エラー時点で発話区間が閉じられる').toBe(null);
+  expect(st.utterances.length, '閉じた区間は utterances に記録される').toBe(1);
+  expect(st.streamErrors, '連続失敗カウンタが増える').toBe(1);
 
   // 復旧後の発話は新しい区間として開く(ギャップは区間の隙間になる)
   session._onSpeakingStart('user1');
-  assert.ok(st.current, '再購読後は新しい発話区間が開く');
+  expect(st.current, '再購読後は新しい発話区間が開く').toBeTruthy();
 
   await session.stop();
 });
@@ -117,7 +112,7 @@ test('再購読時に st.bytes が実ファイルサイズへ再同期される'
 
   session._onSpeakingStart('user1');
   const st = session.trackStates.get('user1');
-  assert.ok(st);
+  assert(st);
 
   subscribed[0].destroy(new Error('decrypt failed'));
   await Promise.allSettled([...session.pendingPipelines]);
@@ -126,7 +121,7 @@ test('再購読時に st.bytes が実ファイルサイズへ再同期される'
   st.bytes = 999_999;
 
   session._onSpeakingStart('user1');
-  assert.equal(st.bytes, 0, '実ファイルサイズ(未書き込み=0)へ再同期される');
+  expect(st.bytes, '実ファイルサイズ(未書き込み=0)へ再同期される').toBe(0);
 
   await session.stop();
 });
@@ -136,19 +131,19 @@ test('データが流れると連続失敗カウンタがリセットされる',
 
   session._onSpeakingStart('user1');
   const st = session.trackStates.get('user1');
-  assert.ok(st);
+  assert(st);
 
   subscribed[0].destroy(new Error('decrypt failed'));
   await Promise.allSettled([...session.pendingPipelines]);
-  assert.equal(st.streamErrors, 1);
+  expect(st.streamErrors).toBe(1);
 
   // 再購読して有効な opus データ(Discord の無音フレーム)を流す
   session._onSpeakingStart('user1');
   subscribed[1].write(Buffer.from([0xf8, 0xff, 0xfe]));
   await new Promise((r) => setTimeout(r, 100));
 
-  assert.ok(st.bytes > 0, 'デコード済み PCM のバイト数が数えられる');
-  assert.equal(st.streamErrors, 0, 'データが流れたらカウンタが 0 に戻る');
+  expect(st.bytes > 0, 'デコード済み PCM のバイト数が数えられる').toBeTruthy();
+  expect(st.streamErrors, 'データが流れたらカウンタが 0 に戻る').toBe(0);
 
   await session.stop();
 });
@@ -165,8 +160,8 @@ test('本人が発話中のままストリームが死んだ場合は自動で�
 
   // 再購読は 200ms 後に行われる
   await new Promise((r) => setTimeout(r, 300));
-  assert.equal(subscribed.length, 2, '発話中なら speaking start を待たずに再購読される');
-  assert.equal(session.activeStreams.has('user1'), true);
+  expect(subscribed.length, '発話中なら speaking start を待たずに再購読される').toBe(2);
+  expect(session.activeStreams.has('user1')).toBe(true);
 
   await session.stop();
 });
@@ -179,5 +174,5 @@ test('stop 中のストリーム終了では再購読しない', async () => {
 
   await session.stop();
   await new Promise((r) => setTimeout(r, 300));
-  assert.equal(subscribed.length, 1, 'stop 後に再購読されない');
+  expect(subscribed.length, 'stop 後に再購読されない').toBe(1);
 });

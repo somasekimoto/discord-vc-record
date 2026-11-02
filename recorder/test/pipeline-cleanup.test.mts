@@ -8,8 +8,7 @@
  * upload.ts をモックせず、スタブ HTTP サーバを立てて実際の /ingest 経路を通す。
  * ffmpeg が必要(wav 化・切り出しが実行される)。
  */
-import test from 'node:test';
-import assert from 'node:assert/strict';
+import { assert, expect, onTestFinished, test } from 'vitest';
 import { createServer } from 'node:http';
 import { access } from 'node:fs/promises';
 import { makeSession, BYTES_PER_SEC } from './helpers.mts';
@@ -47,7 +46,7 @@ async function startStubServer({ fail = false } = {}) {
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
-  assert.ok(address && typeof address === 'object');
+  assert(address && typeof address === 'object');
   const { port } = address;
   return {
     base: `http://127.0.0.1:${port}`,
@@ -80,23 +79,23 @@ async function withStub<T>({ fail }: { fail: boolean }, fn: (run: typeof import(
   }
 }
 
-test('アップロード成功時は pcm を削除し、wav と transcript は残す', async (t) => {
+test('アップロード成功時は pcm を削除し、wav と transcript は残す', async () => {
   const { summary, tracks, cleanup } = await makeSession(oneUser);
-  t.after(cleanup);
+  onTestFinished(cleanup);
 
   const { files, upload } = await withStub({ fail: false }, (run) => run(summary, tracks));
-  assert.equal(upload.uploaded, true);
+  expect(upload.uploaded).toBe(true);
 
-  assert.equal(await exists(tracks[0].pcmPath), false, 'pcm should be deleted');
-  assert.equal(await exists(files.wavPaths[0]), true, 'wav must survive');
-  assert.equal(await exists(files.jsonPath), true, 'transcript must survive');
+  expect(await exists(tracks[0].pcmPath), 'pcm should be deleted').toBe(false);
+  expect(await exists(files.wavPaths[0]), 'wav must survive').toBe(true);
+  expect(await exists(files.jsonPath), 'transcript must survive').toBe(true);
 });
 
-test('アップロード失敗時は pcm を残す(reupload.ts での復旧手段を壊さない)', async (t) => {
+test('アップロード失敗時は pcm を残す(reupload.ts での復旧手段を壊さない)', async () => {
   const { summary, tracks, cleanup } = await makeSession(oneUser);
-  t.after(cleanup);
+  onTestFinished(cleanup);
 
   const { upload } = await withStub({ fail: true }, (run) => run(summary, tracks));
-  assert.equal(upload.uploaded, false);
-  assert.equal(await exists(tracks[0].pcmPath), true, 'pcm must survive for recovery');
+  expect(upload.uploaded).toBe(false);
+  expect(await exists(tracks[0].pcmPath), 'pcm must survive for recovery').toBe(true);
 });

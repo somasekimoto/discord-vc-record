@@ -1,5 +1,4 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
+import { assert, expect, onTestFinished, test, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { mkdtemp, writeFile, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -10,7 +9,7 @@ import { promisify } from 'node:util';
 import { uploadToWeb } from '../src/upload.ts';
 import type { Minutes, UploadFiles } from '../src/types.ts';
 
-// cwd に依存せず、どこから node --test しても同じ entry を起動する。
+// cwd に依存せず、どこから vitest を起動しても同じ entry を起動する。
 const REUPLOAD_ENTRY = fileURLToPath(new URL('../src/reupload.ts', import.meta.url));
 
 async function fixture(statuses: Record<string, number[]> = {}) {
@@ -46,7 +45,7 @@ async function fixture(statuses: Record<string, number[]> = {}) {
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
-  assert.ok(address && typeof address === 'object');
+  assert(address && typeof address === 'object');
   const base = `http://127.0.0.1:${address.port}`;
   const prev = { base: process.env.WEB_BASE_URL, secret: process.env.INGEST_SECRET };
   process.env.WEB_BASE_URL = base;
@@ -63,67 +62,68 @@ async function fixture(statuses: Record<string, number[]> = {}) {
 }
 
 for (const status of [408, 429, 500]) {
-  test(`upload: ${status} は再送し complete の500応答も再送する`, async (t) => {
+  test(`upload: ${status} は再送し complete の500応答も再送する`, async () => {
     const f = await fixture({ '/ingest': [status], '/ingest/audio/complete': [500] });
-    t.after(() => f.close());
+    onTestFinished(() => f.close());
     const result = await uploadToWeb(f.minutes, f.files);
-    assert.equal(result.uploaded, true);
-    assert.equal(f.requests.filter((r) => r.path === '/ingest').length, 2);
-    assert.equal(f.requests.filter((r) => r.path.endsWith('/complete')).length, 3);
-    assert.equal(f.requests.filter((r) => r.path.endsWith('/abort')).length, 0);
+    expect(result.uploaded).toBe(true);
+    expect(f.requests.filter((r) => r.path === '/ingest').length).toBe(2);
+    expect(f.requests.filter((r) => r.path.endsWith('/complete')).length).toBe(3);
+    expect(f.requests.filter((r) => r.path.endsWith('/abort')).length).toBe(0);
     const metaRequest = f.requests.find((r) => r.path === '/ingest');
-    assert.ok(metaRequest);
-    assert.match(metaRequest.body.toString(), /"startedBy":null/);
-    assert.doesNotMatch(metaRequest.body.toString(), /startedByUserId/);
+    assert(metaRequest);
+    expect(metaRequest.body.toString()).toMatch(/"startedBy":null/);
+    expect(metaRequest.body.toString()).not.toMatch(/startedByUserId/);
     const complete = f.requests.find((r) => r.path.endsWith('/complete'));
-    assert.ok(complete);
-    assert.deepEqual(JSON.parse(complete.body.toString()), {
+    assert(complete);
+    expect(JSON.parse(complete.body.toString())).toStrictEqual({
       sessionId: 'legacy-session', userId: '111', uploadId: 'saved-upload',
       parts: [{ partNumber: 1, etag: 'saved-etag' }], durationSec: 1,
     });
   });
 }
 
-test('upload: 400 の音声は再送せず abort、次の mixed は続行し viewUrl を保持する', async (t) => {
+test('upload: 400 の音声は再送せず abort、次の mixed は続行し viewUrl を保持する', async () => {
   const f = await fixture({ '/ingest/audio/part': [400] });
-  t.after(() => f.close());
+  onTestFinished(() => f.close());
   const result = await uploadToWeb(f.minutes, f.files);
-  assert.equal(result.uploaded, false);
-  assert.equal(result.viewUrl, `${f.base}/s/legacy-session`);
-  assert.match(String(result.reason), /111: audio part 400/);
+  expect(result.uploaded).toBe(false);
+  expect(result.viewUrl).toBe(`${f.base}/s/legacy-session`);
+  expect(String(result.reason)).toMatch(/111: audio part 400/);
   const parts = f.requests.filter((r) => r.path.endsWith('/part'));
-  assert.deepEqual(parts.map((r) => r.userId), ['111', 'mixed']);
+  expect(parts.map((r) => r.userId)).toStrictEqual(['111', 'mixed']);
   const abort = f.requests.filter((r) => r.path.endsWith('/abort'));
-  assert.equal(abort.length, 1);
-  assert.deepEqual(JSON.parse(abort[0].body.toString()), { sessionId: 'legacy-session', userId: '111', uploadId: 'saved-upload' });
-  assert.equal(f.requests.filter((r) => r.path.endsWith('/complete')).length, 1);
+  expect(abort.length).toBe(1);
+  expect(JSON.parse(abort[0].body.toString())).toStrictEqual({ sessionId: 'legacy-session', userId: '111', uploadId: 'saved-upload' });
+  expect(f.requests.filter((r) => r.path.endsWith('/complete')).length).toBe(1);
 });
 
-test('upload: plain object の文字列 status は408でも再送しない（旧 strict 比較を保持）', async (t) => {
+test('upload: plain object の文字列 status は408でも再送しない（旧 strict 比較を保持）', async () => {
   const f = await fixture();
-  t.after(() => f.close());
-  const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+  onTestFinished(() => f.close());
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
     throw { status: '408', message: 'plain mock timeout' };
   });
+  onTestFinished(() => fetchMock.mockRestore());
   const result = await uploadToWeb(f.minutes, f.files);
-  assert.equal(result.uploaded, false);
-  assert.equal(fetchMock.mock.callCount(), 1);
-  assert.match(String(result.reason), /plain mock timeout/);
+  expect(result.uploaded).toBe(false);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(String(result.reason)).toMatch(/plain mock timeout/);
 });
 
-test('upload: 未設定ならファイルを読まずスキップする', async (t) => {
+test('upload: 未設定ならファイルを読まずスキップする', async () => {
   const f = await fixture();
-  t.after(() => f.close());
+  onTestFinished(() => f.close());
   delete process.env.WEB_BASE_URL;
   await rm(f.files.mdPath);
   const result = await uploadToWeb(f.minutes, f.files);
-  assert.equal(result.uploaded, false);
-  assert.equal(f.requests.length, 0);
+  expect(result.uploaded).toBe(false);
+  expect(f.requests.length).toBe(0);
 });
 
-test('reupload: utterances のない旧保存 JSON と既存音声から復旧する', async (t) => {
+test('reupload: utterances のない旧保存 JSON と既存音声から復旧する', async () => {
   const f = await fixture();
-  t.after(() => f.close());
+  onTestFinished(() => f.close());
   const sessionDir = join(f.dir, f.minutes.sessionId);
   await mkdir(sessionDir);
   await writeFile(join(sessionDir, 'transcript.json'), JSON.stringify(f.minutes));
@@ -133,12 +133,12 @@ test('reupload: utterances のない旧保存 JSON と既存音声から復旧�
   const { stdout } = await promisify(execFile)(process.execPath, [REUPLOAD_ENTRY, f.minutes.sessionId], {
     env: { ...process.env, RECORDINGS_DIR: f.dir },
   });
-  assert.match(stdout, /"uploaded": true/);
-  assert.equal(f.requests.filter((r) => r.path.endsWith('/part')).length, 1);
+  expect(stdout).toMatch(/"uploaded": true/);
+  expect(f.requests.filter((r) => r.path.endsWith('/part')).length).toBe(1);
   const meta = f.requests.find((r) => r.path === '/ingest');
-  assert.ok(meta);
+  assert(meta);
   // meta の speakers にも '旧録音' があるので、保存ファイル固有の内容で multipart の添付を確かめる。
-  assert.match(meta.body.toString(), /filename="transcript\.md"[\s\S]*?# 旧録音/);
-  assert.match(meta.body.toString(), /filename="transcript\.json"/);
-  assert.doesNotMatch(meta.body.toString(), /"utterances"/);
+  expect(meta.body.toString()).toMatch(/filename="transcript\.md"[\s\S]*?# 旧録音/);
+  expect(meta.body.toString()).toMatch(/filename="transcript\.json"/);
+  expect(meta.body.toString()).not.toMatch(/"utterances"/);
 });

@@ -29,7 +29,7 @@ Issues for bugs, questions and feature ideas are equally welcome.
 cd recorder
 pnpm install --frozen-lockfile
 pnpm run typecheck   # tsc --noEmit (strict)
-pnpm test            # node:test; Discord and OpenAI are faked, ffmpeg is real
+pnpm test            # vitest; Discord and OpenAI are faked, ffmpeg is real
 
 # web
 cd web

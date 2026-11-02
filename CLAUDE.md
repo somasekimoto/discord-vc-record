@@ -17,8 +17,8 @@ Discord VC を録音・日本語文字起こしし、ロール保有者だけが
 
 ```bash
 pnpm run typecheck                        # strict 型チェック（型ストリッピング自体は型検査しない）
-pnpm test                                 # 全テスト（node:test。統合テストは ffmpeg 必須）
-node --test test/pipeline-unit.test.mts   # 単一テストファイル
+pnpm test                                 # 全テスト（vitest。統合テストは ffmpeg 必須）
+pnpm exec vitest run test/pipeline-unit.test.mts   # 単一テストファイル
 pnpm run register                         # スラッシュコマンドを Discord へ登録
 pnpm run start                            # Bot 起動（.env 必要）
 node src/reupload.ts <sessionId>          # アップロードだけ失敗したセッションの復旧
@@ -31,8 +31,8 @@ pnpm run dev                              # wrangler dev（ローカル D1/R2 �
 pnpm run deploy                           # wrangler deploy
 pnpm exec wrangler d1 execute <db> --local --file=schema.sql   # ローカル D1 にスキーマ適用（実 wrangler.toml）
 pnpm run typecheck                        # Worker 型を wrangler.ci.toml から生成して strict 型チェック
-pnpm test                                 # HTTP 回帰テスト（一時 Worker を自動起動。secret 不要）
-pnpm run test:contract                    # 実 recorder uploader → 一時 Worker の契約テスト（応答喪失・部分失敗→再送）
+pnpm test                                 # HTTP 回帰テスト（vitest の test プロジェクト。一時 Worker を自動起動。secret 不要）
+pnpm run test:contract                    # vitest の contract プロジェクト。実 recorder uploader → 一時 Worker の契約テスト（応答喪失・部分失敗→再送）
 
 # 取り込みフロー E2E。smoke は wrangler.ci.toml のローカル D1 を使うので schema も同じ config に適用する
 pnpm exec wrangler d1 execute vc-record --config wrangler.ci.toml --local --file=schema.sql

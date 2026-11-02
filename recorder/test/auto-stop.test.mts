@@ -6,8 +6,7 @@
  */
 import type { PromptPayload, MessageEdit, VoiceEntry, TimerHandle } from '../src/ports.ts';
 import type { InteractionReplyOptions } from 'discord.js';
-import test from 'node:test';
-import assert from 'node:assert/strict';
+import { assert, expect, test } from 'vitest';
 import {
   AutoStopController,
   buildPromptComponents,
@@ -37,7 +36,7 @@ function makeTimers() {
     /** 登録済みタイマーを1つ発火させる(完了まで待つ)。 */
     async fire(id: TimerHandle | null) {
       const t = pending.get(id);
-      assert.ok(t, `timer ${id} is not pending`);
+      assert(t, `timer ${id} is not pending`);
       pending.delete(id);
       await t.fn();
     },
@@ -132,7 +131,7 @@ function makeHarness({ emptyDelayMs = 60_000, vcMembers = [] }: { emptyDelayMs?:
     /** 進行中の確認状態のタイマーを発火させる。 */
     async fireTimer() {
       const state = controller.states.get(GUILD)!;
-      assert.ok(state, 'no pending auto-stop state');
+      expect(state, 'no pending auto-stop state').toBeTruthy();
       await timers.fire(state.timer);
     },
   };
@@ -155,31 +154,31 @@ test('最後の1人が退出するとボタン付きプロンプトが投稿さ�
   const h = makeHarness({ vcMembers: [{ id: 'u1' }] });
   await h.leave('u1');
 
-  assert.equal(h.sent.length, 1);
-  assert.match(h.sent[0].payload.content!, /無人になりました/);
-  assert.match(h.sent[0].payload.content!, /60秒/);
+  expect(h.sent.length).toBe(1);
+  expect(h.sent[0].payload.content!).toMatch(/無人になりました/);
+  expect(h.sent[0].payload.content!).toMatch(/60秒/);
   const buttons = h.sent[0].payload.components[0].components;
-  assert.equal(buttons.length, 1 + EXTEND_MINUTES.length); // すぐ終了 + 延長プリセット
-  assert.equal(buttons[0].custom_id, `autostop:stop:${SESSION_ID}`);
+  expect(buttons.length).toBe(1 + EXTEND_MINUTES.length); // すぐ終了 + 延長プリセット
+  expect(buttons[0].custom_id).toBe(`autostop:stop:${SESSION_ID}`);
 
-  assert.equal(h.stops.length, 0); // 猶予中はまだ停止しない
+  expect(h.stops.length).toBe(0); // 猶予中はまだ停止しない
   await h.fireTimer();
-  assert.deepEqual(h.stops, [{ guildId: GUILD, reason: 'auto' }]);
-  assert.match(h.sent[0].edits[0].content!, /自動終了しました/);
-  assert.deepEqual(h.sent[0].edits[0].components, []); // ボタン無効化
+  expect(h.stops).toStrictEqual([{ guildId: GUILD, reason: 'auto' }]);
+  expect(h.sent[0].edits[0].content!).toMatch(/自動終了しました/);
+  expect(h.sent[0].edits[0].components).toStrictEqual([]); // ボタン無効化
 });
 
 test('Botだけが残った場合も無人として扱う', async () => {
   const h = makeHarness({ vcMembers: [{ id: 'u1' }, { id: 'bot1', bot: true }] });
   await h.leave('u1');
-  assert.equal(h.sent.length, 1);
+  expect(h.sent.length).toBe(1);
 });
 
 test('member未解決の在室者が残っている場合は人間扱いし停止しない', async () => {
   const h = makeHarness({ vcMembers: [{ id: 'u1' }, { id: 'u2', resolved: false }] });
   await h.leave('u1');
-  assert.equal(h.sent.length, 0);
-  assert.equal(h.controller.states.size, 0);
+  expect(h.sent.length).toBe(0);
+  expect(h.controller.states.size).toBe(0);
 });
 
 test('録音対象外のVCの退出には反応しない', async () => {
@@ -189,7 +188,7 @@ test('録音対象外のVCの退出には反応しない', async () => {
     { channelId: 'vc-other', guild: { id: GUILD }, member: { user: { bot: false } }, id: 'u9' },
     { channelId: null, guild: { id: GUILD }, member: { user: { bot: false } }, id: 'u9' },
   );
-  assert.equal(h.sent.length, 0);
+  expect(h.sent.length).toBe(0);
 });
 
 test('録音していないギルドのイベントは無視する', async () => {
@@ -198,7 +197,7 @@ test('録音していないギルドのイベントは無視する', async () =>
     { channelId: VC, guild: { id: 'guild-other' }, member: { user: { bot: false } }, id: 'u1' },
     { channelId: null, guild: { id: 'guild-other' }, member: { user: { bot: false } }, id: 'u1' },
   );
-  assert.equal(h.sent.length, 0);
+  expect(h.sent.length).toBe(0);
 });
 
 test('カウントダウン中に再入室するとキャンセルされ停止しない', async () => {
@@ -207,17 +206,17 @@ test('カウントダウン中に再入室するとキャンセルされ停止�
   const state = h.controller.states.get(GUILD)!;
   await h.join('u1');
 
-  assert.equal(h.controller.states.size, 0);
-  assert.equal(h.timers.pending.has(state.timer), false); // タイマー解除
-  assert.match(h.sent[0].edits[0].content!, /戻ったため/);
-  assert.equal(h.stops.length, 0);
+  expect(h.controller.states.size).toBe(0);
+  expect(h.timers.pending.has(state.timer)).toBe(false); // タイマー解除
+  expect(h.sent[0].edits[0].content!).toMatch(/戻ったため/);
+  expect(h.stops.length).toBe(0);
 });
 
 test('退出イベントが連続しても確認中はプロンプトを重複投稿しない', async () => {
   const h = makeHarness({ vcMembers: [{ id: 'u1' }] });
   await h.leave('u1');
   await h.leave('u1'); // 同じ退出が二重配送された想定
-  assert.equal(h.sent.length, 1);
+  expect(h.sent.length).toBe(1);
 });
 
 test('「すぐ終了」ボタンで即停止しタイマーが解除される', async () => {
@@ -228,10 +227,10 @@ test('「すぐ終了」ボタンで即停止しタイマーが解除される',
   const interaction = makeButtonInteraction(`autostop:stop:${SESSION_ID}`);
   await h.controller.handleButton(interaction);
 
-  assert.deepEqual(h.stops, [{ guildId: GUILD, reason: 'button' }]);
-  assert.equal(h.timers.pending.has(state.timer), false);
-  assert.match(interaction.calls.updates[0].content!, /終了します/);
-  assert.deepEqual(interaction.calls.updates[0].components, []);
+  expect(h.stops).toStrictEqual([{ guildId: GUILD, reason: 'button' }]);
+  expect(h.timers.pending.has(state.timer)).toBe(false);
+  expect(interaction.calls.updates[0].content!).toMatch(/終了します/);
+  expect(interaction.calls.updates[0].components).toStrictEqual([]);
 });
 
 test('延長ボタンで猶予タイマーが分数タイマーに付け替わる', async () => {
@@ -243,11 +242,11 @@ test('延長ボタンで猶予タイマーが分数タイマーに付け替わ�
   await h.controller.handleButton(interaction);
 
   const state = h.controller.states.get(GUILD)!;
-  assert.equal(state.phase, 'extended');
-  assert.equal(h.timers.pending.has(countdownTimer), false); // 元の60秒は解除
-  assert.equal(h.timers.pending.get(state.timer)!.ms, 15 * 60_000);
-  assert.match(interaction.calls.updates[0].content!, /15分延長/);
-  assert.equal(h.stops.length, 0);
+  expect(state.phase).toBe('extended');
+  expect(h.timers.pending.has(countdownTimer)).toBe(false); // 元の60秒は解除
+  expect(h.timers.pending.get(state.timer)!.ms).toBe(15 * 60_000);
+  expect(interaction.calls.updates[0].content!).toMatch(/15分延長/);
+  expect(h.stops.length).toBe(0);
 });
 
 test('延長満了後もまだ無人なら新しいプロンプトを再送し、その猶予満了で停止する', async () => {
@@ -256,11 +255,11 @@ test('延長満了後もまだ無人なら新しいプロンプトを再送し�
   await h.controller.handleButton(makeButtonInteraction(`autostop:extend:${SESSION_ID}:5`));
 
   await h.fireTimer(); // 延長満了: まだ無人
-  assert.equal(h.sent.length, 2); // プロンプト再送
-  assert.equal(h.stops.length, 0);
+  expect(h.sent.length).toBe(2); // プロンプト再送
+  expect(h.stops.length).toBe(0);
 
   await h.fireTimer(); // 再送分の猶予満了
-  assert.deepEqual(h.stops, [{ guildId: GUILD, reason: 'auto' }]);
+  expect(h.stops).toStrictEqual([{ guildId: GUILD, reason: 'auto' }]);
 });
 
 test('満了コールバックが既にキュー済みでも延長ボタンが優先される(延長レース)', async () => {
@@ -272,13 +271,13 @@ test('満了コールバックが既にキュー済みでも延長ボタンが�
   const queued = h.timers.pending.get(state.timer);
 
   await h.controller.handleButton(makeButtonInteraction(`autostop:extend:${SESSION_ID}:5`));
-  assert.ok(queued);
+  assert(queued);
   await queued.fn();
 
-  assert.equal(h.stops.length, 0); // 延長したのに停止しない
+  expect(h.stops.length).toBe(0); // 延長したのに停止しない
   const after = h.controller.states.get(GUILD)!;
-  assert.equal(after.phase, 'extended');
-  assert.ok(h.timers.pending.has(after.timer)); // 延長タイマーは孤児にならず生きている
+  expect(after.phase).toBe('extended');
+  expect(h.timers.pending.has(after.timer)).toBeTruthy(); // 延長タイマーは孤児にならず生きている
 });
 
 test('猶予満了時に guild が取得できなければ停止せず再確認へ張り直す', async () => {
@@ -289,14 +288,14 @@ test('猶予満了時に guild が取得できなければ停止せず再確認�
   await h.fireTimer();
 
   // 誤停止はしないが、監視は途切れさせない(本当に無人なら最終的に止めるため)
-  assert.equal(h.stops.length, 0);
-  assert.equal(h.controller.states.size, 1);
-  assert.ok(h.timers.pending.has(h.controller.states.get(GUILD)!.timer));
+  expect(h.stops.length).toBe(0);
+  expect(h.controller.states.size).toBe(1);
+  expect(h.timers.pending.has(h.controller.states.get(GUILD)!.timer)).toBeTruthy();
 
   // guild が復帰したら次の再確認で停止する
   h.controller.getGuild = realGetGuild;
   await h.fireTimer();
-  assert.deepEqual(h.stops, [{ guildId: GUILD, reason: 'auto' }]);
+  expect(h.stops).toStrictEqual([{ guildId: GUILD, reason: 'auto' }]);
 });
 
 test('延長満了時に guild が取得できなければ延長状態のまま再確認へ張り直す', async () => {
@@ -307,14 +306,14 @@ test('延長満了時に guild が取得できなければ延長状態のまま�
   h.controller.getGuild = () => undefined;
   await h.fireTimer();
 
-  assert.equal(h.sent.length, 1); // プロンプト再送はまだ
-  assert.equal(h.stops.length, 0);
-  assert.equal(h.controller.states.get(GUILD)!.phase, 'extended');
+  expect(h.sent.length).toBe(1); // プロンプト再送はまだ
+  expect(h.stops.length).toBe(0);
+  expect(h.controller.states.get(GUILD)!.phase).toBe('extended');
 
   // guild が復帰したら次の再確認でプロンプト再送(通常の延長満了と同じ流れに戻る)
   h.controller.getGuild = realGetGuild;
   await h.fireTimer();
-  assert.equal(h.sent.length, 2);
+  expect(h.sent.length).toBe(2);
 });
 
 test('延長中に再入室するとキャンセルされ、以降何も起きない', async () => {
@@ -323,9 +322,9 @@ test('延長中に再入室するとキャンセルされ、以降何も起き�
   await h.controller.handleButton(makeButtonInteraction(`autostop:extend:${SESSION_ID}:5`));
   await h.join('u1');
 
-  assert.equal(h.controller.states.size, 0);
-  assert.equal(h.timers.pending.size, 0);
-  assert.equal(h.stops.length, 0);
+  expect(h.controller.states.size).toBe(0);
+  expect(h.timers.pending.size).toBe(0);
+  expect(h.stops.length).toBe(0);
 });
 
 test('猶予満了時に無人でなくなっていたら停止しない(入室イベント取りこぼしへの保険)', async () => {
@@ -335,9 +334,9 @@ test('猶予満了時に無人でなくなっていたら停止しない(入室�
   h.voiceEntries.push({ channelId: VC, id: 'u2', member: { user: { bot: false } } });
   await h.fireTimer();
 
-  assert.equal(h.stops.length, 0);
-  assert.equal(h.controller.states.size, 0);
-  assert.match(h.sent[0].edits[0].content!, /戻ったため/);
+  expect(h.stops.length).toBe(0);
+  expect(h.controller.states.size).toBe(0);
+  expect(h.sent[0].edits[0].content!).toMatch(/戻ったため/);
 });
 
 test('別セッションの古いボタンは ephemeral 応答だけ返し停止しない', async () => {
@@ -347,11 +346,11 @@ test('別セッションの古いボタンは ephemeral 応答だけ返し停止
   const interaction = makeButtonInteraction('autostop:stop:sess-old');
   await h.controller.handleButton(interaction);
 
-  assert.equal(h.stops.length, 0);
-  assert.equal(interaction.calls.replies.length, 1);
-  assert.match(interaction.calls.replies[0].content!, /すでに終了/);
-  assert.deepEqual(interaction.calls.messageEdits[0], { components: [] }); // 古いボタンは剥がす
-  assert.equal(h.controller.states.size, 1); // 進行中の確認は生きたまま
+  expect(h.stops.length).toBe(0);
+  expect(interaction.calls.replies.length).toBe(1);
+  expect(interaction.calls.replies[0].content!).toMatch(/すでに終了/);
+  expect(interaction.calls.messageEdits[0]).toStrictEqual({ components: [] }); // 古いボタンは剥がす
+  expect(h.controller.states.size).toBe(1); // 進行中の確認は生きたまま
 });
 
 test('プリセットにない延長分数は拒否する', async () => {
@@ -361,8 +360,8 @@ test('プリセットにない延長分数は拒否する', async () => {
   const interaction = makeButtonInteraction(`autostop:extend:${SESSION_ID}:999`);
   await h.controller.handleButton(interaction);
 
-  assert.match(interaction.calls.replies[0].content!, /不正/);
-  assert.equal(h.controller.states.get(GUILD)!.phase, 'countdown'); // タイマーは元のまま
+  expect(interaction.calls.replies[0].content!).toMatch(/不正/);
+  expect(h.controller.states.get(GUILD)!.phase).toBe('countdown'); // タイマーは元のまま
 });
 
 test('プロンプト投稿に失敗しても自動停止は生きる', async () => {
@@ -371,9 +370,9 @@ test('プロンプト投稿に失敗しても自動停止は生きる', async ()
     throw new Error('channel fetch failed');
   };
   await h.leave('u1');
-  assert.equal(h.sent.length, 0);
+  expect(h.sent.length).toBe(0);
   await h.fireTimer();
-  assert.deepEqual(h.stops, [{ guildId: GUILD, reason: 'auto' }]);
+  expect(h.stops).toStrictEqual([{ guildId: GUILD, reason: 'auto' }]);
 });
 
 test('外部から録音が停止されたら確認状態を片付ける(notifySessionEnded)', async () => {
@@ -384,12 +383,12 @@ test('外部から録音が停止されたら確認状態を片付ける(notifyS
   h.sessionsMap.delete(GUILD); // /rec stop 相当
   await h.controller.notifySessionEnded(GUILD);
 
-  assert.equal(h.controller.states.size, 0);
-  assert.equal(h.timers.pending.has(state.timer), false);
-  assert.match(h.sent[0].edits[0].content!, /終了しました/);
+  expect(h.controller.states.size).toBe(0);
+  expect(h.timers.pending.has(state.timer)).toBe(false);
+  expect(h.sent[0].edits[0].content!).toMatch(/終了しました/);
 
   // 片付け後にタイマーが発火しても(clearTimeout されない実装だったとしても)停止しない
-  assert.equal(h.stops.length, 0);
+  expect(h.stops.length).toBe(0);
 });
 
 test('セッション消滅後にタイマーが発火しても何もしない', async () => {
@@ -399,21 +398,21 @@ test('セッション消滅後にタイマーが発火しても何もしない',
   h.sessionsMap.delete(GUILD); // notifySessionEnded を経ずに消えた想定
 
   await h.timers.fire(state.timer);
-  assert.equal(h.stops.length, 0);
-  assert.equal(h.controller.states.size, 0);
+  expect(h.stops.length).toBe(0);
+  expect(h.controller.states.size).toBe(0);
 });
 
 test('buildPromptComponents は sessionId を customId に埋める', () => {
   const rows = buildPromptComponents('abc');
   const ids = rows[0].components.map((c) => c.custom_id);
-  assert.deepEqual(ids, ['autostop:stop:abc', ...EXTEND_MINUTES.map((m) => `autostop:extend:abc:${m}`)]);
+  expect(ids).toStrictEqual(['autostop:stop:abc', ...EXTEND_MINUTES.map((m) => `autostop:extend:abc:${m}`)]);
 });
 
 test('parseEmptyDelayMs: 既定60秒・0で無効・不正値は既定に戻す', () => {
-  assert.equal(parseEmptyDelayMs(undefined), DEFAULT_EMPTY_DELAY_MS);
-  assert.equal(parseEmptyDelayMs(''), DEFAULT_EMPTY_DELAY_MS);
-  assert.equal(parseEmptyDelayMs('90'), 90_000);
-  assert.equal(parseEmptyDelayMs('0'), 0);
-  assert.equal(parseEmptyDelayMs('abc'), DEFAULT_EMPTY_DELAY_MS);
-  assert.equal(parseEmptyDelayMs('-5'), DEFAULT_EMPTY_DELAY_MS);
+  expect(parseEmptyDelayMs(undefined)).toBe(DEFAULT_EMPTY_DELAY_MS);
+  expect(parseEmptyDelayMs('')).toBe(DEFAULT_EMPTY_DELAY_MS);
+  expect(parseEmptyDelayMs('90')).toBe(90_000);
+  expect(parseEmptyDelayMs('0')).toBe(0);
+  expect(parseEmptyDelayMs('abc')).toBe(DEFAULT_EMPTY_DELAY_MS);
+  expect(parseEmptyDelayMs('-5')).toBe(DEFAULT_EMPTY_DELAY_MS);
 });

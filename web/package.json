@@ -10,13 +10,14 @@
     "deploy": "wrangler deploy",
     "generate-types": "wrangler types --config wrangler.ci.toml --strict-vars=false",
     "typecheck": "pnpm run generate-types && tsc -p tsconfig.json && tsc -p tsconfig.test.json",
-    "test": "node --test 'test/*.test.mts'",
-    "test:contract": "node --test test/recorder-contract.mts"
+    "test": "vitest run --project test",
+    "test:contract": "vitest run --project contract"
   },
   "devDependencies": {
     "@types/node": "22.20.1",
     "discord-api-types": "0.38.55",
     "typescript": "5.9.3",
+    "vitest": "5.0.5",
     "wrangler": "^4.0.0"
   }
 }

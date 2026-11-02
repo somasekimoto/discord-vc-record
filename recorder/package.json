@@ -8,7 +8,7 @@
     "spike": "node src/spike.ts",
     "register": "node src/register-commands.ts",
     "start": "node src/index.ts",
-    "test": "node --test 'test/*.test.mts'",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "reupload": "node src/reupload.ts"
   },
@@ -27,6 +27,7 @@
   },
   "devDependencies": {
     "@types/node": "22.18.6",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "5.0.5"
   }
 }
