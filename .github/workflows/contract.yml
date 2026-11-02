@@ -1,0 +1,42 @@
+# recorder の実 uploader(recorder/src/upload.ts) → ローカル Worker(D1/R2) の契約テスト。
+# 片側だけの API 変更、応答喪失時の再送・部分失敗時の abort / 再送の契約崩れを検出する。
+name: contract
+# PR / main push での起動は ci.yml(統合ゲート)が変更範囲を見て呼び出す。単独起動は手動のみ。
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # upload.ts は Node 組み込みだけを使うので、依存は web(wrangler)のみ入れる。
+    # Node は web の engines 下限で揃える(recorder の engines 下限も同じ版)。
+    defaults:
+      run:
+        working-directory: web
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - id: node
+        run: |
+          min=$(jq -r '.engines.node' package.json | sed -nE 's/^>=([0-9]+\.[0-9]+\.[0-9]+)$/\1/p')
+          if [ -z "$min" ]; then echo "web/package.json の engines.node を >=x.y.z として読めない" >&2; exit 1; fi
+          echo "engines minimum: $min"
+          echo "min=$min" >> "$GITHUB_OUTPUT"
+      # pnpm 12 のbinレイアウト対応。既存のcorepack導入順を維持。
+      - name: Enable corepack
+        run: npm install -g corepack@latest && corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.node.outputs.min }}
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      # 契約テストは recorder の型(Minutes/UploadFiles)も import するため、recorder だけの変更でも型を照合する。
+      - run: pnpm run typecheck
+      - run: pnpm run test:contract

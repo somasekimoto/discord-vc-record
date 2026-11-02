@@ -26,6 +26,21 @@ SMOKE_BIG=1 node test/smoke.mts
 
 105MiBを40MiB + 40MiB + 25MiBに分割する元のsmokeを維持している。テスト相手を変える場合は `SMOKE_BASE_URL` を指定できるが、実サービスには向けない。
 
+## recorder → web 契約テスト
+
+```sh
+cd web
+pnpm run test:contract
+```
+
+`test/recorder-contract.mts` は recorder の実 uploader（`recorder/src/upload.ts` の `uploadToWeb`）を、`pnpm test` と同じ方法で起動した一時ローカルWorker（D1/R2）へ接続する。recorder の依存インストールは不要（`upload.ts` はNode組み込みだけを使う）。間に置いた中継プロキシで障害を注入し、次を確認する。
+
+- 40MiB超の話者wav（2パート）・mixed・文字起こしが届き、D1のtracks/表示とR2の配信内容が送信元と一致する
+- completeの応答喪失：Worker側は完了済みのまま、recorderの再送が `alreadyCompleted` で成功し、行が重複しない
+- 音声の部分失敗：失敗分はabortがWorkerへ届き、他の音声は続行、viewUrlは残る（pipelineはこの結果でPCMを残す）。同じ保存物で再送すると欠けたトラックだけが埋まる
+
+片側だけAPIを変えると落ちることが目的で、異常入力の網羅は smoke、認証/認可/表示は `routes.test.mts`、PCM保持は `recorder/test/pipeline-cleanup.test.mts` の責務。CIでは `ci.yml` が recorder / web どちらの変更でも `contract.yml` を呼び、`gate` に含める。
+
 ## 型の分離
 
 - `wrangler.ci.toml`: 型生成とローカル検証専用の公開ダミー設定。本番deployには使わない。binding名、compatibility_date/flagsはexampleと揃える。
