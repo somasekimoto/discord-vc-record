@@ -89,7 +89,8 @@ before(async () => {
     relay(target, req, res).catch((error: unknown) => {
       // Worker の停止・無応答を recorder のタイムアウト待ちにせず、原因付きの 502 で即座に返す
       const message = error instanceof Error ? error.message : String(error);
-      exchanges.push({ method: req.method!, path: req.url!, userId: null, status: 502, fault: false });
+      const url = new URL(req.url!, 'http://proxy');
+      exchanges.push({ method: req.method!, path: url.pathname, userId: url.searchParams.get('userId'), status: 502, fault: false });
       if (res.headersSent) return res.destroy();
       res.writeHead(502).end(`proxy upstream error: ${message}\n${worker?.logs().slice(-2000) ?? ''}`);
     });
