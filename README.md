@@ -65,10 +65,11 @@ corepack enable   # package.json の packageManager 指定の pnpm が自動で�
 |---|---|
 | `allowBuilds` | 依存の install/postinstall スクリプトを既定で拒否し、明示許可したものだけ実行する |
 | `minimumReleaseAge: 10080` | 公開から7日未満のバージョンを解決しない（単位は**分**。`7` と書くと7分になる） |
+| `minimumReleaseAgeStrict: true` | 7日以上経った版が無ければ失敗させる（pnpm 12.0.0 は明示しないと自動で除外リストに足して続行してしまう） |
 
 依存を追加して `ERR_PNPM_IGNORED_BUILDS` が出たら、そのパッケージがなぜビルドを要るのか確認したうえで `pnpm-workspace.yaml` の `allowBuilds` に追記する（`dangerouslyAllowAllBuilds` は使わない）。**`@discordjs/opus` の許可を外すと録音が壊れる。**
 
-急ぎで7日未満の版が必要なときだけ `pnpm add <pkg> --allow-any-release-age`。
+急ぎで7日未満の版が必要なときだけ、`pnpm-workspace.yaml` の `minimumReleaseAgeExclude` に `<pkg>@<version>` を一時的に追加する。
 
 ## recorder のセットアップ
 

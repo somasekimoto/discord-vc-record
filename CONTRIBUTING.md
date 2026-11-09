@@ -86,7 +86,7 @@ This is the most self-contained contribution. `recorder/src/stt/local.ts` (faste
 - Dependency install scripts are denied unless listed in `allowBuilds` (`pnpm-workspace.yaml`).
   If `pnpm install` fails with `ERR_PNPM_IGNORED_BUILDS`, find out why the package needs a build before adding it; never use `dangerouslyAllowAllBuilds`.
   Removing `@discordjs/opus` from `allowBuilds` breaks recording.
-- `minimumReleaseAge: 10080` (minutes = 7 days) blocks freshly published versions. Use `pnpm add <pkg> --allow-any-release-age` only when you have a concrete reason.
+- `minimumReleaseAge: 10080` (minutes = 7 days) with `minimumReleaseAgeStrict: true` blocks freshly published versions (without strict, pnpm 12.0.0 silently adds them to `minimumReleaseAgeExclude`). If you have a concrete reason to need a newer version, add `<pkg>@<version>` to `minimumReleaseAgeExclude` temporarily.
 - Never commit Discord tokens, OpenAI keys, Cloudflare secrets, or real `fly.toml` / `wrangler.toml` / `.env`. Start from the `*.example` files.
 - `INGEST_SECRET` must match between `recorder` and `web`.
 
