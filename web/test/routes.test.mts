@@ -66,6 +66,40 @@ test('OAuth 成功と上流エラー、cookie属性を維持する', async () =>
   await request('/__test/mode?mode=success');
 });
 
+// オープンリダイレクト対策: 戻り先は同一オリジンのパスだけ。外部・スキーム相対・
+// バックスラッシュ・制御文字で別オリジンへ飛ぶ値は / に置き換える。
+test('login/callback の戻り先は同一オリジンのパスだけを許可する', async () => {
+  await request('/__test/mode?mode=success');
+  const unsafe = [
+    'https://evil.example/phish',
+    '//evil.example/phish',
+    '/\\evil.example',
+    '\\\\evil.example',
+    '/\t/evil.example',
+    'javascript:alert(1)',
+    'g/1',
+    // URL のドットセグメント正規化で // になり、スキーム相対リダイレクトに化ける入力
+    '/.//evil.example',
+    '/a/..//evil.example',
+    '/%2e//evil.example',
+    '/%2E%2E//evil.example',
+    '/./\\evil.example',
+  ];
+  for (const next of unsafe) {
+    const login = await request(`/login?${new URLSearchParams({ next })}`, { redirect: 'manual' });
+    expect(new URL(login.headers.get('Location')!).searchParams.get('state'), next).toBe('/');
+    const callback = await request(`/callback?${new URLSearchParams({ code: 'code', state: next })}`, { redirect: 'manual' });
+    expect(callback.status, next).toBe(302);
+    expect(callback.headers.get('Location'), next).toBe('/');
+  }
+  for (const next of ['/g/1', '/g/1/c/2', '/s/abc', '/s/abc?x=1#y']) {
+    const login = await request(`/login?${new URLSearchParams({ next })}`, { redirect: 'manual' });
+    expect(new URL(login.headers.get('Location')!).searchParams.get('state'), next).toBe(next);
+    const callback = await request(`/callback?${new URLSearchParams({ code: 'code', state: next })}`, { redirect: 'manual' });
+    expect(callback.headers.get('Location'), next).toBe(next);
+  }
+});
+
 test('認可: 未ログイン、未設定、member/role 不一致、401/404/429 とキャッシュ', async () => {
   expect((await access('anonymous')).reason).toBe('not_logged_in');
   await seed('9100', '');

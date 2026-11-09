@@ -73,10 +73,32 @@ export async function getSession(req: Request, env: Pick<AuthEnv, 'SESSION_SECRE
   return verifySession(token, env.SESSION_SECRET);
 }
 
+/**
+ * ログイン後の戻り先を同一オリジンのパスに限定する(オープンリダイレクト対策)。
+ * state はクエリから誰でも指定できるため、外部URL・スキーム相対(//host)・
+ * バックスラッシュや制御文字でブラウザが別オリジンと解釈する値は '/' に置き換える。
+ * 正規の戻り先はアプリ自身が作る /g/... /s/... だけなので、利用者の体験は変わらない。
+ */
+const NEXT_PARSE_BASE = 'https://next.invalid';
+export function safeNext(raw: string | null): string {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return '/';
+  if (/[\u0000-\u001f\u007f]/.test(raw)) return '/';
+  try {
+    const parsed = new URL(raw, NEXT_PARSE_BASE);
+    if (parsed.origin !== NEXT_PARSE_BASE) return '/';
+    // ドットセグメントの正規化(/.//host, /a/..//host, /%2e//host)で // 始まりに化けた値は
+    // ブラウザがスキーム相対URLとして外部へ飛ぶため、正規化後の値でも弾く
+    const path = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    return path.startsWith('//') ? '/' : path;
+  } catch {
+    return '/';
+  }
+}
+
 /** /login: Discord 認可画面へ。`next` に戻り先を載せる。 */
 export function handleLogin(req: Request, env: AuthEnv) {
   const url = new URL(req.url);
-  const next = url.searchParams.get('next') || '/';
+  const next = safeNext(url.searchParams.get('next'));
   const redirectUri = `${env.WEB_BASE_URL}/callback`;
   const authUrl = new URL('https://discord.com/oauth2/authorize');
   authUrl.searchParams.set('client_id', env.DISCORD_CLIENT_ID);
@@ -91,7 +113,7 @@ export function handleLogin(req: Request, env: AuthEnv) {
 export async function handleCallback(req: Request, env: AuthEnv) {
   const url = new URL(req.url);
   const code = url.searchParams.get('code');
-  const next = url.searchParams.get('state') || '/';
+  const next = safeNext(url.searchParams.get('state'));
   if (!code) return new Response('missing code', { status: 400 });
 
   const redirectUri = `${env.WEB_BASE_URL}/callback`;
