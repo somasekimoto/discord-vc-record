@@ -78,6 +78,12 @@ test('login/callback の戻り先は同一オリジンのパスだけを許可�
     '/\t/evil.example',
     'javascript:alert(1)',
     'g/1',
+    // URL のドットセグメント正規化で // になり、スキーム相対リダイレクトに化ける入力
+    '/.//evil.example',
+    '/a/..//evil.example',
+    '/%2e//evil.example',
+    '/%2E%2E//evil.example',
+    '/./\\evil.example',
   ];
   for (const next of unsafe) {
     const login = await request(`/login?${new URLSearchParams({ next })}`, { redirect: 'manual' });

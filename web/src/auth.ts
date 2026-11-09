@@ -86,7 +86,10 @@ export function safeNext(raw: string | null): string {
   try {
     const parsed = new URL(raw, NEXT_PARSE_BASE);
     if (parsed.origin !== NEXT_PARSE_BASE) return '/';
-    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    // ドットセグメントの正規化(/.//host, /a/..//host, /%2e//host)で // 始まりに化けた値は
+    // ブラウザがスキーム相対URLとして外部へ飛ぶため、正規化後の値でも弾く
+    const path = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    return path.startsWith('//') ? '/' : path;
   } catch {
     return '/';
   }
