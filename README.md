@@ -59,17 +59,17 @@ sh scripts/setup-hooks.sh   # gitleaks による pre-commit / pre-push を有効
 corepack enable   # package.json の packageManager 指定の pnpm が自動で使われる
 ```
 
-`recorder/` と `web/` はそれぞれ独立した pnpm プロジェクト（lockfile も別）。効いている防御は2つ:
+`recorder/` と `web/` はそれぞれ独立した pnpm プロジェクト（lockfile も別）。効いている防御は次のとおり（3行目は2行目を確実に効かせるための設定）:
 
 | 設定 | 効果 |
 |---|---|
 | `allowBuilds` | 依存の install/postinstall スクリプトを既定で拒否し、明示許可したものだけ実行する |
 | `minimumReleaseAge: 10080` | 公開から7日未満のバージョンを解決しない（単位は**分**。`7` と書くと7分になる） |
-| `minimumReleaseAgeStrict: true` | 7日以上経った版が無ければ失敗させる（pnpm 12.0.0 は明示しないと自動で除外リストに足して続行してしまう） |
+| `minimumReleaseAgeStrict: true` | 7日以上経った版が無いとき、CI など非対話では失敗し、対話端末では承認を求める（pnpm 12.0.0 は明示しないと自動で除外リストに足して続行してしまう） |
 
 依存を追加して `ERR_PNPM_IGNORED_BUILDS` が出たら、そのパッケージがなぜビルドを要るのか確認したうえで `pnpm-workspace.yaml` の `allowBuilds` に追記する（`dangerouslyAllowAllBuilds` は使わない）。**`@discordjs/opus` の許可を外すと録音が壊れる。**
 
-急ぎで7日未満の版が必要なときだけ、`pnpm-workspace.yaml` の `minimumReleaseAgeExclude` に `<pkg>@<version>` を一時的に追加する。
+急ぎで7日未満の版が必要なときだけ、対象プロジェクト（`recorder/` または `web/`）の `pnpm-workspace.yaml` の `minimumReleaseAgeExclude` に `<pkg>@<version>` を一時的に追加する。
 
 ## recorder のセットアップ
 

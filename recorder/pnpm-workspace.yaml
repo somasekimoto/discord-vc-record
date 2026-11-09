@@ -4,7 +4,8 @@
 #   汚染パッケージは公開から数時間〜1日で発見・削除されることが多いため、
 #   新しすぎるリリースを掴まない猶予を置く。7日 = 10080分。
 #   （7 と書くと7分になるので注意。）
-# minimumReleaseAgeStrict: 条件を満たす版が無いとき ERR_PNPM_NO_MATURE_MATCHING_VERSION で失敗させる。
+# minimumReleaseAgeStrict: 条件を満たす版が無いとき、CI など非対話では ERR_PNPM_NO_MATURE_MATCHING_VERSION で
+#   失敗し、対話端末では承認を求める（勝手に新しい版を入れない）。
 #   pnpm 12.0.0 は minimumReleaseAge を明示しても非strictで、新しすぎる版を minimumReleaseAgeExclude に
 #   自動追記して続行する（ゲートにならない）ため明示する。
 #   緊急でこれより新しい版が要る場合は minimumReleaseAgeExclude に `<pkg>@<version>` を一時的に追加して回避する。
