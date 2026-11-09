@@ -54,7 +54,7 @@ node test/smoke.mts                       # 別ターミナルで。SMOKE_BIG=1 
 
 - **パッケージマネージャは pnpm 固定**（`packageManager` で版も固定、`npm install` は使わない）。サプライチェーン攻撃対策の設定が `pnpm-workspace.yaml` にあり、npm ではその防御が丸ごと無効になるため。recorder / web はそれぞれ独立した pnpm プロジェクト（lockfile も別）で、単一 workspace にはまとめていない — 別々のデプロイ物で依存も交わらず、統合すると web の依存更新が recorder の Docker レイヤキャッシュを壊すため。
 - **ビルドスクリプトはホワイトリスト方式**（pnpm 11 の既定で拒否）。`pnpm-workspace.yaml` の `allowBuilds` に書いたパッケージだけが実行を許される。**`@discordjs/opus` の許可を外すと録音が壊れる**（node-gyp のネイティブビルドが必須）。依存追加時に `ERR_PNPM_IGNORED_BUILDS` が出たら、中身を確認したうえで `allowBuilds` に追記する。`dangerouslyAllowAllBuilds` は使わない。Dockerfile は install 前に `pnpm-workspace.yaml` を COPY すること（無いとビルドが拒否され録音不能なイメージができる）。
-- **`minimumReleaseAge: 10080`（7日、単位は分）で新しすぎるリリースを掴まない**。汚染パッケージは公開から数時間〜1日で発見・削除されることが多いため猶予を置く。pnpm 11 でもこれは既定で無効なので明示指定が必要（`7` と書くと7分になる）。緊急時は `pnpm add <pkg> --allow-any-release-age` で個別に回避する。
+- **`minimumReleaseAge: 10080`（7日、単位は分）で新しすぎるリリースを掴まない**。汚染パッケージは公開から数時間〜1日で発見・削除されることが多いため猶予を置く。`7` と書くと7分になる。pnpm 12.0.0 は `minimumReleaseAgeStrict: true` を併記しないと非strictで、新しすぎる版を `minimumReleaseAgeExclude` に自動追記して続行するため必ず併記する。緊急時は `minimumReleaseAgeExclude` に `<pkg>@<version>` を一時的に追加して回避する。
 
 ## 秘密情報・設定ファイル
 
