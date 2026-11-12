@@ -23,6 +23,8 @@ import {
 } from './join-prompt.ts';
 import { AutoStopController, parseEmptyDelayMs } from './auto-stop.ts';
 import { purgeOldSessions, parseRetentionMs, checkDiskSpace } from './cleanup.ts';
+import { BusyTracker, DEFAULT_BUSY_FILE } from './busy.ts';
+import type { PipelineReservation } from './busy.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RECORDINGS_DIR = process.env.RECORDINGS_DIR ?? join(__dirname, '..', 'recordings');
@@ -37,7 +39,11 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
 });
 
-const sessions = new SessionManager({ client, baseDir: RECORDINGS_DIR });
+// 自動デプロイが「録音中・文字起こし中なら再起動を待つ」ために読む(busy.ts)。
+// sessions より先に作り、録音の登録・解除のたびに書き出す。
+const busy = new BusyTracker({ path: process.env.BUSY_FILE ?? DEFAULT_BUSY_FILE, countSessions: () => sessions.byGuild.size });
+const sessions = new SessionManager({ client, baseDir: RECORDINGS_DIR, onChange: () => busy.write() });
+busy.write();
 
 // 指定 VC への入室時に /rec start を促す(未設定なら無効)
 const promptChannelIds = parsePromptChannelIds(process.env.RECORD_PROMPT_CHANNEL_IDS);
@@ -207,9 +213,13 @@ async function handleRecord(interaction: ChatInputCommandInteraction) {
       await interaction.editReply('現在このサーバーで録音は行われていません。');
       return;
     }
-    const { summary, tracks } = stopped;
-    await interaction.editReply(formatStopReport(tracks));
-    if (tracks.length > 0) announcePipelineResult(summary, tracks, interaction.channel?.isSendable() ? interaction.channel : null);
+    const { summary, tracks, pipeline } = stopped;
+    try {
+      await interaction.editReply(formatStopReport(tracks));
+    } finally {
+      // 返信に失敗しても文字起こしは進める(録音を失わない)。
+      if (pipeline) announcePipelineResult(summary, tracks, interaction.channel?.isSendable() ? interaction.channel : null, pipeline);
+    }
     return;
   }
 }
@@ -238,9 +248,18 @@ async function startSession({ guildId, channelId, startedByUserId, notifyChannel
  */
 async function stopSessionSafe(guildId: string) {
   if (!sessions.get(guildId)) return null;
+  // 停止処理(書き込みの確定)と、その後の文字起こしの開始までを busy に数える。
+  // stop() は冒頭で録音の登録を外すため、ここで先に予約しないと停止中に idle に見える。
+  const pipeline = busy.reserve();
   try {
-    return await sessions.stop(guildId);
+    const stopped = await sessions.stop(guildId);
+    if (stopped.tracks.length === 0) {
+      pipeline.release();
+      return { ...stopped, pipeline: null };
+    }
+    return { ...stopped, pipeline };
   } catch (err) {
+    pipeline.release();
     // byGuild からの除去は stop() 冒頭で同期的に行われるため、このエラーは
     // 競合の後着を意味する。それ以外は本物の停止失敗として区別する。
     if (err instanceof NoActiveSessionError) return null;
@@ -268,10 +287,10 @@ async function autoStopSession(guildId: string) {
   }
   if (!stopped) return;
   console.log(`[bot] auto-stopped session for guild ${guildId}`);
-  const { summary, tracks } = stopped;
+  const { summary, tracks, pipeline } = stopped;
   const channel = await fetchNotifyChannel();
   await channel?.send(formatStopReport(tracks)).catch(() => {});
-  if (tracks.length > 0) announcePipelineResult(summary, tracks, channel);
+  if (pipeline) announcePipelineResult(summary, tracks, channel, pipeline);
 }
 
 function formatStopReport(tracks: Track[]) {
@@ -287,8 +306,9 @@ function formatStopReport(tracks: Track[]) {
  * 録音終了後にまとめて: wav 化 → STT → 議事録生成 → 保存。
  * 時間がかかるので非同期で進め、完了後にチャンネルへ投稿する。
  */
-function announcePipelineResult(summary: SessionSnapshot, tracks: Track[], channel: SendableChannels | null) {
-  runPipeline(summary, tracks)
+function announcePipelineResult(summary: SessionSnapshot, tracks: Track[], channel: SendableChannels | null, pipeline: PipelineReservation) {
+  pipeline
+    .run(() => runPipeline(summary, tracks))
     .then(async ({ minutes, files, upload }) => {
       const speakerCount = minutes.speakers.length;
       const link = upload?.uploaded
