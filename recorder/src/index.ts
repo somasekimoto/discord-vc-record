@@ -23,6 +23,7 @@ import {
 } from './join-prompt.ts';
 import { AutoStopController, parseEmptyDelayMs } from './auto-stop.ts';
 import { purgeOldSessions, parseRetentionMs, checkDiskSpace } from './cleanup.ts';
+import { BusyTracker, DEFAULT_BUSY_FILE } from './busy.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RECORDINGS_DIR = process.env.RECORDINGS_DIR ?? join(__dirname, '..', 'recordings');
@@ -38,6 +39,9 @@ const client = new Client({
 });
 
 const sessions = new SessionManager({ client, baseDir: RECORDINGS_DIR });
+// 自動デプロイが「録音中・文字起こし中なら再起動を待つ」ために読む(busy.ts)。
+const busy = new BusyTracker({ path: process.env.BUSY_FILE ?? DEFAULT_BUSY_FILE, countSessions: () => sessions.byGuild.size });
+busy.write();
 
 // 指定 VC への入室時に /rec start を促す(未設定なら無効)
 const promptChannelIds = parsePromptChannelIds(process.env.RECORD_PROMPT_CHANNEL_IDS);
@@ -221,13 +225,17 @@ async function handleRecord(interaction: ChatInputCommandInteraction) {
 async function startSession({ guildId, channelId, startedByUserId, notifyChannelId }: StartOptions) {
   const guild = client.guilds.cache.get(guildId);
   const resolveName = (id: string) => guild?.members?.cache.get(id)?.displayName ?? id;
-  return await sessions.start({
-    guildId,
-    channelId,
-    startedByUserId,
-    notifyChannelId,
-    resolveName,
-  });
+  try {
+    return await sessions.start({
+      guildId,
+      channelId,
+      startedByUserId,
+      notifyChannelId,
+      resolveName,
+    });
+  } finally {
+    busy.write();
+  }
 }
 
 /**
@@ -245,6 +253,8 @@ async function stopSessionSafe(guildId: string) {
     // 競合の後着を意味する。それ以外は本物の停止失敗として区別する。
     if (err instanceof NoActiveSessionError) return null;
     throw err;
+  } finally {
+    busy.write();
   }
 }
 
@@ -288,7 +298,8 @@ function formatStopReport(tracks: Track[]) {
  * 時間がかかるので非同期で進め、完了後にチャンネルへ投稿する。
  */
 function announcePipelineResult(summary: SessionSnapshot, tracks: Track[], channel: SendableChannels | null) {
-  runPipeline(summary, tracks)
+  busy
+    .trackPipeline(() => runPipeline(summary, tracks))
     .then(async ({ minutes, files, upload }) => {
       const speakerCount = minutes.speakers.length;
       const link = upload?.uploaded

@@ -189,6 +189,15 @@ flyctl volumes create vc_data --region nrt --size 10 --app <your-app>
 flyctl deploy --ha=false --app <your-app>
 ```
 
+### 自動デプロイ（main へのマージ後）
+
+`.github/workflows/deploy.yml` が、main の CI（`ci` の gate）が通ったあと、変更のあった側だけをデプロイする。
+
+- recorder: 録音中・文字起こし中は再起動しない。recorder が書き出す `/tmp/recorder-busy.json`（`src/busy.ts`）を `scripts/wait-recorder-idle.sh` が読み、両方 0 になるまで最大 3 時間待つ。デプロイ後 3 分以内に `[bot] logged in as` がログに出なければ直前のイメージへ戻す。
+- web: `wrangler deploy` 後、トップページが 200 を返さなければ `wrangler rollback` で直前の版へ戻す。
+- 手動でやり直すときは Actions の deploy を `workflow_dispatch`（target: recorder / web / both）で起動する。
+- 必要な repo secrets は `deploy.yml` 冒頭のコメントを参照（Fly はアプリ限定のデプロイトークン、Cloudflare は Workers Scripts:Edit のみのトークン）。
+
 > ⚠ recorder は **単一インスタンス必須**（`--ha=false`）。複数だと同じVCを二重録音する。
 
 > ⚠ メモリは **2GB 以上**（`fly.toml` の `[[vm]] memory = "2048mb"`）。1〜2時間の録音は

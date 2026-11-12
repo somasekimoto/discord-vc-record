@@ -1,0 +1,165 @@
+# main の CI(ci.yml の gate)が通ったら、変更のあった側だけ本番へデプロイする。
+#
+# - recorder(Fly): 録音中・文字起こし中は再起動しない(scripts/wait-recorder-idle.sh で最大 3 時間待つ)。
+#   デプロイ後に Discord へのログインがログに出なければ、直前のイメージへ戻す。
+# - web(Cloudflare Workers): wrangler deploy 後にトップページが 200 を返さなければ直前の版へ戻す。
+#
+# fly.toml / wrangler.toml は git に入れない方針なので、中身を secrets から復元する。
+# 必要な repo secrets:
+#   FLY_API_TOKEN          fly tokens create deploy -a <recorder app>   (そのアプリ限定)
+#   RECORDER_FLY_TOML      recorder/fly.toml の中身
+#   CLOUDFLARE_API_TOKEN   Workers Scripts:Edit(このアカウント限定)
+#   CLOUDFLARE_ACCOUNT_ID
+#   WEB_WRANGLER_TOML      web/wrangler.toml の中身
+#
+# workflow_run は既定ブランチの定義で動くため、このファイルは main に入ってから効く(PR では試せない)。
+name: deploy
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: recorder / web / both
+        required: true
+        default: both
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false # 進行中のデプロイは止めない
+
+jobs:
+  changes:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.diff.outputs.sha }}
+      recorder: ${{ steps.diff.outputs.recorder }}
+      web: ${{ steps.diff.outputs.web }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 2
+      - id: diff
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          if [ -n "$TARGET" ]; then
+            case "$TARGET" in recorder|both) echo recorder=true >> "$GITHUB_OUTPUT";; esac
+            case "$TARGET" in web|both) echo web=true >> "$GITHUB_OUTPUT";; esac
+            exit 0
+          fi
+          files=$(git -c core.quotePath=false diff --no-renames --name-only HEAD^1 HEAD)
+          printf '%s\n' "$files"
+          has() { if grep -q "^$1/" <<< "$files"; then echo true; else echo false; fi; }
+          echo "recorder=$(has recorder)" >> "$GITHUB_OUTPUT"
+          echo "web=$(has web)" >> "$GITHUB_OUTPUT"
+
+  recorder:
+    needs: changes
+    if: needs.changes.outputs.recorder == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    defaults:
+      run:
+        working-directory: recorder
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Restore fly.toml
+        env:
+          FLY_TOML: ${{ secrets.RECORDER_FLY_TOML }}
+        run: |
+          test -n "$FLY_TOML" || { echo "RECORDER_FLY_TOML is not set" >&2; exit 1; }
+          printf '%s\n' "$FLY_TOML" > fly.toml
+          app=$(sed -nE 's/^app *= *"([^"]+)".*/\1/p' fly.toml)
+          test -n "$app"
+          echo "APP=$app" >> "$GITHUB_ENV"
+      - name: Wait until not recording or transcribing
+        run: ../scripts/wait-recorder-idle.sh "$APP" 10800
+      - name: Remember the current image for rollback
+        run: |
+          prev=$(flyctl image show -a "$APP" --json | jq -r 'if type=="array" then .[0] else . end | "\(.Registry)/\(.Repository):\(.Tag)"')
+          echo "current image: $prev"
+          echo "PREV_IMAGE=$prev" >> "$GITHUB_ENV"
+      - name: Deploy
+        run: |
+          echo "STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+          flyctl deploy --remote-only --ha=false --config fly.toml  # 単一インスタンス必須(README)
+      - name: Check the bot logged in to Discord
+        id: health
+        run: |
+          for _ in $(seq 1 18); do
+            if flyctl logs -a "$APP" --no-tail 2>/dev/null \
+                | awk -v s="$STARTED" '$1 >= s' | grep -q '\[bot\] logged in as'; then
+              echo "bot is online"; exit 0
+            fi
+            sleep 10
+          done
+          echo "no login log within 3 minutes" >&2
+          exit 1
+      - name: Roll back to the previous image
+        if: failure() && steps.health.conclusion == 'failure'
+        run: flyctl deploy --ha=false --config fly.toml --image "$PREV_IMAGE"
+
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+      - name: Enable corepack
+        run: npm install -g corepack@latest && corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Restore wrangler.toml
+        env:
+          WRANGLER_TOML: ${{ secrets.WEB_WRANGLER_TOML }}
+        run: |
+          test -n "$WRANGLER_TOML" || { echo "WEB_WRANGLER_TOML is not set" >&2; exit 1; }
+          printf '%s\n' "$WRANGLER_TOML" > wrangler.toml
+          base=$(sed -nE 's/^WEB_BASE_URL *= *"([^"]+)".*/\1/p' wrangler.toml)
+          test -n "$base"
+          echo "BASE=$base" >> "$GITHUB_ENV"
+      - run: pnpm run typecheck
+      - name: Deploy
+        run: pnpm exec wrangler deploy
+      - name: Check the site responds
+        id: health
+        run: |
+          for _ in $(seq 1 12); do
+            if curl -fsS -o /dev/null "$BASE/"; then echo "site is up"; exit 0; fi
+            sleep 5
+          done
+          echo "site did not return 200 within 60 seconds" >&2
+          exit 1
+      - name: Roll back to the previous version
+        if: failure() && steps.health.conclusion == 'failure'
+        run: |
+          pnpm exec wrangler rollback --yes --message "auto rollback - health check failed"
