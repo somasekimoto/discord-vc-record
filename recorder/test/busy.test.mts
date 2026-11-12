@@ -77,17 +77,13 @@ test('run されない予約は一定時間で自動解除され、デプロイ�
 
 test('SessionManager は VC 接続の完了を待つ前に登録を知らせる(接続中も busy)', async () => {
   let release!: () => void;
-  class SlowStart extends RecordingSession {
-    override async start() {
-      await new Promise<void>((r) => { release = r; });
-      return 'sess';
-    }
-  }
+  const spy = vi.spyOn(RecordingSession.prototype, 'start').mockImplementation(async () => {
+    await new Promise<void>((r) => { release = r; });
+    return 'sess';
+  });
+  onTestFinished(() => spy.mockRestore());
   const counts: number[] = [];
   const mgr = new SessionManager({ client: new Client({ intents: [] }), baseDir: '/tmp', onChange: () => counts.push(mgr.byGuild.size) });
-  // start() は RecordingSession を内部で作るので、生成をすり替える
-  const origSet = mgr.byGuild.set.bind(mgr.byGuild);
-  mgr.byGuild.set = (k, v) => origSet(k, Object.setPrototypeOf(v, SlowStart.prototype));
   const p = mgr.start({ guildId: 'g1', channelId: 'c1', startedByUserId: 'u1' });
   await new Promise((r) => setTimeout(r, 0));
   expect(counts).toEqual([1]); // まだ接続中

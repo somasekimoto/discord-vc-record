@@ -214,8 +214,12 @@ async function handleRecord(interaction: ChatInputCommandInteraction) {
       return;
     }
     const { summary, tracks, pipeline } = stopped;
-    await interaction.editReply(formatStopReport(tracks));
-    if (pipeline) announcePipelineResult(summary, tracks, interaction.channel?.isSendable() ? interaction.channel : null, pipeline);
+    try {
+      await interaction.editReply(formatStopReport(tracks));
+    } finally {
+      // 返信に失敗しても文字起こしは進める(録音を失わない)。
+      if (pipeline) announcePipelineResult(summary, tracks, interaction.channel?.isSendable() ? interaction.channel : null, pipeline);
+    }
     return;
   }
 }
