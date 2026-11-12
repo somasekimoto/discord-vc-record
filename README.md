@@ -197,9 +197,9 @@ flyctl deploy --ha=false --app <your-app>
 - web: `wrangler deploy` 後、トップページが 200 を返さなければ `wrangler rollback` で直前の版へ戻す。
 - 手動でやり直すときは Actions の deploy を `workflow_dispatch`（target: recorder / web / both）で起動する。
 - recorder はイメージを先に作ってから待機確認をし、確認後すぐマシンを更新する（ビルド中に始まった録音を切らないため）。それでも「録音していない」と確認してから再起動までの数十秒に録音を始めると、その録音は再起動で止まる。
-- 対象は前回成功したデプロイからの差分で決める。遅れて終わった古い CI run は、main の先端でなければデプロイしない。
+- 対象は、recorder / web それぞれ前回デプロイに成功したコミットからの差分で決める（GitHub の Deployments の記録を使う）。遅れて終わった古い CI run は、main の先端でなければデプロイしない。
 - 手動起動（Actions → deploy → Run workflow）は main を選んだときだけ動く。
-- 本番に出すのは main だけ。secrets は GitHub Environment `production`（デプロイ可能なブランチを main に限定）に置く。必要な secrets は `deploy.yml` 冒頭のコメントを参照（Fly はアプリ限定のデプロイトークン、Cloudflare は Workers Scripts:Edit のみのトークン）。
+- 本番に出すのは main だけ。secrets は GitHub Environment `recorder` / `web`（どちらもデプロイ可能なブランチを main に限定）に置く。必要な secrets は `deploy.yml` 冒頭のコメントを参照（Fly はアプリ限定のデプロイトークン、Cloudflare は Workers Scripts:Edit のみのトークン）。
 
 > ⚠ recorder は **単一インスタンス必須**（`--ha=false`）。複数だと同じVCを二重録音する。
 

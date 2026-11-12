@@ -5,14 +5,10 @@
 # - web(Cloudflare Workers): wrangler deploy 後にトップページが 200 を返さなければ直前の版へ戻す。
 #
 # fly.toml / wrangler.toml は git に入れない方針なので、中身を secrets から復元する。
-# secrets は GitHub Environment「production」(デプロイ可能なブランチを main に限定)に置く。
+# secrets は GitHub Environment に置き、どちらもデプロイ可能なブランチを main に限定する。
 # repo secrets に置くと、どのブランチの workflow からでも読めてしまうため。
-# 必要な environment secrets:
-#   FLY_API_TOKEN          fly tokens create deploy -a <recorder app>   (そのアプリ限定)
-#   RECORDER_FLY_TOML      recorder/fly.toml の中身
-#   CLOUDFLARE_API_TOKEN   Workers Scripts:Edit(このアカウント限定)
-#   CLOUDFLARE_ACCOUNT_ID
-#   WEB_WRANGLER_TOML      web/wrangler.toml の中身
+#   Environment「recorder」: FLY_API_TOKEN(fly tokens create deploy -a <recorder app>、そのアプリ限定)、RECORDER_FLY_TOML(recorder/fly.toml の中身)
+#   Environment「web」:      CLOUDFLARE_API_TOKEN(Workers Scripts:Edit)、CLOUDFLARE_ACCOUNT_ID、WEB_WRANGLER_TOML(web/wrangler.toml の中身)
 #
 # workflow_run は既定ブランチの定義で動くため、このファイルは main に入ってから効く(PR では試せない)。
 name: deploy
@@ -32,7 +28,7 @@ on:
 
 permissions:
   contents: read
-  actions: read # 前回成功したデプロイの SHA を調べるため
+  deployments: read # 前回成功したデプロイの SHA を調べるため
 
 concurrency:
   group: deploy
@@ -75,27 +71,36 @@ jobs:
             case "$TARGET" in web|both) echo web=true >> "$GITHUB_OUTPUT";; esac
             exit 0
           fi
-          # 前回成功したデプロイからの差分で判定する。複数コミットの push や、
-          # 同時実行の制御で待機中の run が置き換えられた場合も変更を取りこぼさない。
-          base=$(gh api "repos/$REPO/actions/workflows/deploy.yml/runs?branch=main&status=success&per_page=1" \
-            --jq '.workflow_runs[0].head_sha // empty')
-          if [ -n "$base" ] && git fetch -q --depth=200 origin main && git cat-file -e "$base^{commit}" 2>/dev/null; then
-            echo "diff since the last successful deploy: $base"
-          else
-            base=HEAD^1
-            echo "no earlier successful deploy found; diff against $base"
-          fi
-          files=$(git -c core.quotePath=false diff --no-renames --name-only "$base" HEAD)
-          printf '%s\n' "$files"
-          has() { if grep -q "^$1/" <<< "$files"; then echo true; else echo false; fi; }
-          echo "recorder=$(has recorder)" >> "$GITHUB_OUTPUT"
-          echo "web=$(has web)" >> "$GITHUB_OUTPUT"
+          # 対象ごとに「前回デプロイに成功したコミット」からの差分で判定する。
+          # job ごとに別の Environment(recorder / web)を使うので、GitHub の Deployments に
+          # 対象別の成功記録が残る。何もデプロイしなかった run や片方だけの手動デプロイで
+          # 基準が進み、変更を取りこぼすことがない。
+          git fetch -q --depth=500 origin main
+          last_ok() {
+            for id in $(gh api "repos/$REPO/deployments?environment=$1&per_page=30" --jq '.[].id'); do
+              st=$(gh api "repos/$REPO/deployments/$id/statuses?per_page=1" --jq '.[0].state // empty')
+              if [ "$st" = success ]; then gh api "repos/$REPO/deployments/$id" --jq .sha; return; fi
+            done
+          }
+          changed() {
+            base=$(last_ok "$1")
+            if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+              base=$(git rev-parse HEAD^1)
+            fi
+            if git -c core.quotePath=false diff --no-renames --name-only "$base" HEAD | grep -q "^$1/"; then
+              echo "$1: changed since $base" >&2; echo true
+            else
+              echo "$1: no change since $base" >&2; echo false
+            fi
+          }
+          echo "recorder=$(changed recorder)" >> "$GITHUB_OUTPUT"
+          echo "web=$(changed web)" >> "$GITHUB_OUTPUT"
 
   recorder:
     needs: changes
     if: needs.changes.outputs.recorder == 'true'
     runs-on: ubuntu-latest
-    environment: production
+    environment: recorder
     timeout-minutes: 240
     defaults:
       run:
@@ -170,7 +175,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
-    environment: production
+    environment: web
     defaults:
       run:
         working-directory: web
