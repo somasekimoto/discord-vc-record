@@ -196,7 +196,8 @@ flyctl deploy --ha=false --app <your-app>
 - recorder: 録音中・文字起こし中は再起動しない。recorder が書き出す `/tmp/recorder-busy.json`（`src/busy.ts`）を `scripts/wait-recorder-idle.sh` が読み、両方 0 になるまで最大 3 時間待つ。デプロイ後 3 分以内に `[bot] logged in as` がログに出なければ直前のイメージへ戻す。
 - web: `wrangler deploy` 後、トップページが 200 を返さなければ `wrangler rollback` で直前の版へ戻す。
 - 手動でやり直すときは Actions の deploy を `workflow_dispatch`（target: recorder / web / both）で起動する。
-- 必要な repo secrets は `deploy.yml` 冒頭のコメントを参照（Fly はアプリ限定のデプロイトークン、Cloudflare は Workers Scripts:Edit のみのトークン）。
+- recorder はイメージを先に作ってから待機確認をし、確認後すぐマシンを更新する（ビルド中に始まった録音を切らないため）。
+- 本番に出すのは main だけ。secrets は GitHub Environment `production`（デプロイ可能なブランチを main に限定）に置く。必要な secrets は `deploy.yml` 冒頭のコメントを参照（Fly はアプリ限定のデプロイトークン、Cloudflare は Workers Scripts:Edit のみのトークン）。
 
 > ⚠ recorder は **単一インスタンス必須**（`--ha=false`）。複数だと同じVCを二重録音する。
 

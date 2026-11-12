@@ -5,7 +5,9 @@
 # - web(Cloudflare Workers): wrangler deploy 後にトップページが 200 を返さなければ直前の版へ戻す。
 #
 # fly.toml / wrangler.toml は git に入れない方針なので、中身を secrets から復元する。
-# 必要な repo secrets:
+# secrets は GitHub Environment「production」(デプロイ可能なブランチを main に限定)に置く。
+# repo secrets に置くと、どのブランチの workflow からでも読めてしまうため。
+# 必要な environment secrets:
 #   FLY_API_TOKEN          fly tokens create deploy -a <recorder app>   (そのアプリ限定)
 #   RECORDER_FLY_TOML      recorder/fly.toml の中身
 #   CLOUDFLARE_API_TOKEN   Workers Scripts:Edit(このアカウント限定)
@@ -23,8 +25,9 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: recorder / web / both
-        required: true
+        description: デプロイ対象
+        type: choice
+        options: [both, recorder, web]
         default: both
 
 permissions:
@@ -36,7 +39,10 @@ concurrency:
 
 jobs:
   changes:
-    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    # 本番に出すのはマージ済みの main だけ(手動起動も main 以外からは動かない)。
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.diff.outputs.sha }}
@@ -68,6 +74,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.recorder == 'true'
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 240
     defaults:
       run:
@@ -78,7 +85,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.changes.outputs.sha }}
-      - uses: superfly/flyctl-actions/setup-flyctl@master
+      # サードパーティの action はコミットで固定する(デプロイトークンを扱うため)。
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
       - name: Restore fly.toml
         env:
           FLY_TOML: ${{ secrets.RECORDER_FLY_TOML }}
@@ -88,22 +96,31 @@ jobs:
           app=$(sed -nE 's/^app *= *"([^"]+)".*/\1/p' fly.toml)
           test -n "$app"
           echo "APP=$app" >> "$GITHUB_ENV"
-      - name: Wait until not recording or transcribing
-        run: ../scripts/wait-recorder-idle.sh "$APP" 10800
+      # 先にイメージだけ作る。opus のネイティブビルドで数分かかるので、待機確認の後にやると
+      # その間に始まった録音が再起動で切れる。
+      - name: Build and push the image
+        run: |
+          flyctl deploy --remote-only --build-only --push --config fly.toml --image-label "ci-${GITHUB_SHA::12}-${GITHUB_RUN_ID}"
+          echo "NEW_IMAGE=registry.fly.io/$APP:ci-${GITHUB_SHA::12}-${GITHUB_RUN_ID}" >> "$GITHUB_ENV"
       - name: Remember the current image for rollback
         run: |
           prev=$(flyctl image show -a "$APP" --json | jq -r 'if type=="array" then .[0] else . end | "\(.Registry)/\(.Repository):\(.Tag)"')
           echo "current image: $prev"
           echo "PREV_IMAGE=$prev" >> "$GITHUB_ENV"
+      - name: Wait until not recording or transcribing
+        run: ../scripts/wait-recorder-idle.sh "$APP" 10800
       - name: Deploy
+        id: deploy
         run: |
           echo "STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
-          flyctl deploy --remote-only --ha=false --config fly.toml  # 単一インスタンス必須(README)
+          flyctl deploy --ha=false --config fly.toml --image "$NEW_IMAGE"  # 単一インスタンス必須(README)
       - name: Check the bot logged in to Discord
         id: health
         run: |
           for _ in $(seq 1 18); do
+            # flyctl logs はパイプ先でも時刻に色付けの制御文字を付けるので、外してから比べる。
             if flyctl logs -a "$APP" --no-tail 2>/dev/null \
+                | sed -E 's/\x1b\[[0-9;]*m//g' \
                 | awk -v s="$STARTED" '$1 >= s' | grep -q '\[bot\] logged in as'; then
               echo "bot is online"; exit 0
             fi
@@ -111,14 +128,16 @@ jobs:
           done
           echo "no login log within 3 minutes" >&2
           exit 1
+      # 新しいイメージでマシンを更新した後の失敗(deploy 自体の失敗・ログイン確認の失敗)だけ戻す。
       - name: Roll back to the previous image
-        if: failure() && steps.health.conclusion == 'failure'
+        if: failure() && (steps.deploy.conclusion == 'failure' || steps.health.conclusion == 'failure')
         run: flyctl deploy --ha=false --config fly.toml --image "$PREV_IMAGE"
 
   web:
     needs: changes
     if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
+    environment: production
     defaults:
       run:
         working-directory: web

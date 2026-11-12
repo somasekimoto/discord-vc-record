@@ -1,7 +1,7 @@
 /**
  * BusyTracker: 自動デプロイが「録音中・文字起こし中は再起動しない」と判断する材料。
  */
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -44,4 +44,29 @@ test('pipeline の実行中は数え、成功しても失敗しても終了後�
 test('書き出せない場所でも例外を投げない(録音を止めない)', () => {
   const tracker = new BusyTracker({ path: '/nonexistent-dir/busy.json', countSessions: () => 0 });
   expect(() => tracker.write()).not.toThrow();
+});
+
+test('予約は停止直後から数え、run の終了で戻す', async () => {
+  const { tracker, read } = setup({ n: 0 });
+  const r = tracker.reserve();
+  expect(read().pipelines).toBe(1); // 停止〜pipeline 開始の間も busy
+  await r.run(async () => {
+    expect(read().pipelines).toBe(1);
+  });
+  expect(read().pipelines).toBe(0);
+  r.release(); // 二重に戻さない
+  expect(read().pipelines).toBe(0);
+});
+
+test('run されない予約は一定時間で自動解除され、デプロイを待たせ続けない', () => {
+  vi.useFakeTimers();
+  try {
+    const { tracker, read } = setup({ n: 0 });
+    tracker.reserve(1000);
+    expect(read().pipelines).toBe(1);
+    vi.advanceTimersByTime(1000);
+    expect(read().pipelines).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
 });
