@@ -1,14 +1,18 @@
 /**
  * BusyTracker: 自動デプロイが「録音中・文字起こし中は再起動しない」と判断する材料。
  */
-import { expect, test, vi } from 'vitest';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { expect, onTestFinished, test, vi } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { Client } from 'discord.js';
+import { SessionManager, RecordingSession } from '../src/recorder.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BusyTracker } from '../src/busy.ts';
 
 function setup(sessions: { n: number }) {
-  const path = join(mkdtempSync(join(tmpdir(), 'busy-')), 'busy.json');
+  const dir = mkdtempSync(join(tmpdir(), 'busy-'));
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'busy.json');
   const tracker = new BusyTracker({ path, countSessions: () => sessions.n, now: () => new Date('2026-11-12T00:00:00Z') });
   const read = () => JSON.parse(readFileSync(path, 'utf8'));
   return { tracker, read };
@@ -69,4 +73,24 @@ test('run されない予約は一定時間で自動解除され、デプロイ�
   } finally {
     vi.useRealTimers();
   }
+});
+
+test('SessionManager は VC 接続の完了を待つ前に登録を知らせる(接続中も busy)', async () => {
+  let release!: () => void;
+  class SlowStart extends RecordingSession {
+    override async start() {
+      await new Promise<void>((r) => { release = r; });
+      return 'sess';
+    }
+  }
+  const counts: number[] = [];
+  const mgr = new SessionManager({ client: new Client({ intents: [] }), baseDir: '/tmp', onChange: () => counts.push(mgr.byGuild.size) });
+  // start() は RecordingSession を内部で作るので、生成をすり替える
+  const origSet = mgr.byGuild.set.bind(mgr.byGuild);
+  mgr.byGuild.set = (k, v) => origSet(k, Object.setPrototypeOf(v, SlowStart.prototype));
+  const p = mgr.start({ guildId: 'g1', channelId: 'c1', startedByUserId: 'u1' });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(counts).toEqual([1]); // まだ接続中
+  release();
+  await p;
 });

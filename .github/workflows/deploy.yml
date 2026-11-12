@@ -32,6 +32,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # 前回成功したデプロイの SHA を調べるため
 
 concurrency:
   group: deploy
@@ -56,15 +57,35 @@ jobs:
       - id: diff
         env:
           TARGET: ${{ inputs.target }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           sha=$(git rev-parse HEAD)
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          # 遅れて終わった古い CI run で、新しい版の後に古いコードを出さない。
+          tip=$(gh api "repos/$REPO/commits/main" --jq .sha)
+          if [ "$sha" != "$tip" ]; then
+            echo "$sha is no longer the tip of main ($tip); skipping"
+            echo recorder=false >> "$GITHUB_OUTPUT"
+            echo web=false >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ -n "$TARGET" ]; then
             case "$TARGET" in recorder|both) echo recorder=true >> "$GITHUB_OUTPUT";; esac
             case "$TARGET" in web|both) echo web=true >> "$GITHUB_OUTPUT";; esac
             exit 0
           fi
-          files=$(git -c core.quotePath=false diff --no-renames --name-only HEAD^1 HEAD)
+          # 前回成功したデプロイからの差分で判定する。複数コミットの push や、
+          # 同時実行の制御で待機中の run が置き換えられた場合も変更を取りこぼさない。
+          base=$(gh api "repos/$REPO/actions/workflows/deploy.yml/runs?branch=main&status=success&per_page=1" \
+            --jq '.workflow_runs[0].head_sha // empty')
+          if [ -n "$base" ] && git fetch -q --depth=200 origin main && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "diff since the last successful deploy: $base"
+          else
+            base=HEAD^1
+            echo "no earlier successful deploy found; diff against $base"
+          fi
+          files=$(git -c core.quotePath=false diff --no-renames --name-only "$base" HEAD)
           printf '%s\n' "$files"
           has() { if grep -q "^$1/" <<< "$files"; then echo true; else echo false; fi; }
           echo "recorder=$(has recorder)" >> "$GITHUB_OUTPUT"
@@ -79,8 +100,6 @@ jobs:
     defaults:
       run:
         working-directory: recorder
-    env:
-      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -99,23 +118,33 @@ jobs:
       # 先にイメージだけ作る。opus のネイティブビルドで数分かかるので、待機確認の後にやると
       # その間に始まった録音が再起動で切れる。
       - name: Build and push the image
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           flyctl deploy --remote-only --build-only --push --config fly.toml --image-label "ci-${GITHUB_SHA::12}-${GITHUB_RUN_ID}"
           echo "NEW_IMAGE=registry.fly.io/$APP:ci-${GITHUB_SHA::12}-${GITHUB_RUN_ID}" >> "$GITHUB_ENV"
       - name: Remember the current image for rollback
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           prev=$(flyctl image show -a "$APP" --json | jq -r 'if type=="array" then .[0] else . end | "\(.Registry)/\(.Repository):\(.Tag)"')
           echo "current image: $prev"
           echo "PREV_IMAGE=$prev" >> "$GITHUB_ENV"
       - name: Wait until not recording or transcribing
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: ../scripts/wait-recorder-idle.sh "$APP" 10800
       - name: Deploy
         id: deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           echo "STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
           flyctl deploy --ha=false --config fly.toml --image "$NEW_IMAGE"  # 単一インスタンス必須(README)
       - name: Check the bot logged in to Discord
         id: health
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           for _ in $(seq 1 18); do
             # flyctl logs はパイプ先でも時刻に色付けの制御文字を付けるので、外してから比べる。
@@ -131,6 +160,8 @@ jobs:
       # 新しいイメージでマシンを更新した後の失敗(deploy 自体の失敗・ログイン確認の失敗)だけ戻す。
       - name: Roll back to the previous image
         if: failure() && (steps.deploy.conclusion == 'failure' || steps.health.conclusion == 'failure')
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: flyctl deploy --ha=false --config fly.toml --image "$PREV_IMAGE"
 
   web:
@@ -143,8 +174,6 @@ jobs:
         working-directory: web
     env:
       WRANGLER_SEND_METRICS: 'false'
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -167,18 +196,27 @@ jobs:
           test -n "$base"
           echo "BASE=$base" >> "$GITHUB_ENV"
       - run: pnpm run typecheck
+      # Cloudflare のトークンはデプロイと戻しの手順にだけ渡す(依存のインストールや typecheck には渡さない)。
       - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm exec wrangler deploy
       - name: Check the site responds
         id: health
         run: |
           for _ in $(seq 1 12); do
-            if curl -fsS -o /dev/null "$BASE/"; then echo "site is up"; exit 0; fi
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/" || true)
+            if [ "$code" = 200 ]; then echo "site is up"; exit 0; fi
+            echo "HTTP $code"
             sleep 5
           done
           echo "site did not return 200 within 60 seconds" >&2
           exit 1
       - name: Roll back to the previous version
         if: failure() && steps.health.conclusion == 'failure'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           pnpm exec wrangler rollback --yes --message "auto rollback - health check failed"

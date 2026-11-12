@@ -39,9 +39,10 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
 });
 
-const sessions = new SessionManager({ client, baseDir: RECORDINGS_DIR });
 // 自動デプロイが「録音中・文字起こし中なら再起動を待つ」ために読む(busy.ts)。
+// sessions より先に作り、録音の登録・解除のたびに書き出す。
 const busy = new BusyTracker({ path: process.env.BUSY_FILE ?? DEFAULT_BUSY_FILE, countSessions: () => sessions.byGuild.size });
+const sessions = new SessionManager({ client, baseDir: RECORDINGS_DIR, onChange: () => busy.write() });
 busy.write();
 
 // 指定 VC への入室時に /rec start を促す(未設定なら無効)
@@ -226,17 +227,13 @@ async function handleRecord(interaction: ChatInputCommandInteraction) {
 async function startSession({ guildId, channelId, startedByUserId, notifyChannelId }: StartOptions) {
   const guild = client.guilds.cache.get(guildId);
   const resolveName = (id: string) => guild?.members?.cache.get(id)?.displayName ?? id;
-  try {
-    return await sessions.start({
-      guildId,
-      channelId,
-      startedByUserId,
-      notifyChannelId,
-      resolveName,
-    });
-  } finally {
-    busy.write();
-  }
+  return await sessions.start({
+    guildId,
+    channelId,
+    startedByUserId,
+    notifyChannelId,
+    resolveName,
+  });
 }
 
 /**
@@ -247,18 +244,22 @@ async function startSession({ guildId, channelId, startedByUserId, notifyChannel
  */
 async function stopSessionSafe(guildId: string) {
   if (!sessions.get(guildId)) return null;
+  // 停止処理(書き込みの確定)と、その後の文字起こしの開始までを busy に数える。
+  // stop() は冒頭で録音の登録を外すため、ここで先に予約しないと停止中に idle に見える。
+  const pipeline = busy.reserve();
   try {
     const stopped = await sessions.stop(guildId);
-    // 文字起こしは停止の直後から busy に数える(返信などの間にデプロイが割り込まないように)。
-    const pipeline = stopped.tracks.length > 0 ? busy.reserve() : null;
+    if (stopped.tracks.length === 0) {
+      pipeline.release();
+      return { ...stopped, pipeline: null };
+    }
     return { ...stopped, pipeline };
   } catch (err) {
+    pipeline.release();
     // byGuild からの除去は stop() 冒頭で同期的に行われるため、このエラーは
     // 競合の後着を意味する。それ以外は本物の停止失敗として区別する。
     if (err instanceof NoActiveSessionError) return null;
     throw err;
-  } finally {
-    busy.write();
   }
 }
 

@@ -1,9 +1,10 @@
 /**
  * busy.ts — 録音中・文字起こし中かどうかをファイルに書き出す。
  *
- * 自動デプロイ(.github/workflows/deploy.yml)は再起動の前にこのファイルを読み、
- * sessions と pipelines が両方 0 になるまで待つ。再起動すると録音が止まり、
- * 文字起こし途中の pipeline も失われるため。
+ * 自動デプロイ(.github/workflows/deploy.yml → scripts/wait-recorder-idle.sh)は再起動の前に
+ * このファイルを読み、sessions と pipelines が両方 0 になるまで待つ。再起動すると録音が止まり、
+ * 文字起こし途中の pipeline も失われるため。ファイルが無いとき(この仕組みを持たない旧版)は
+ * スクリプト側が録音ファイルの開き具合と更新時刻で代わりに判定する。
  * 書き込みは一時ファイル + rename で行い、読み手が途中の内容を見ないようにする。
  */
 import { renameSync, writeFileSync } from 'node:fs';
@@ -33,7 +34,7 @@ export class BusyTracker {
     return { sessions: this.countSessions(), pipelines: this.pipelines, updatedAt: this.now().toISOString() };
   }
 
-  /** 書き出しの失敗は録音を止めない(ログだけ)。デプロイ側はファイルが古い/無い場合も待つ。 */
+  /** 書き出しの失敗は録音を止めない(ログだけ)。 */
   write() {
     const tmp = `${this.path}.tmp`;
     try {

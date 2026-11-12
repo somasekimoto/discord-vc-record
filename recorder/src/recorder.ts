@@ -428,11 +428,14 @@ export class SessionManager {
   declare client: RecordingOptions['client'];
   declare baseDir: string;
   declare byGuild: Map<string, RecordingSession>;
-  constructor({ client, baseDir }: Pick<RecordingOptions, 'client' | 'baseDir'>) {
+  /** byGuild が変わるたびに呼ぶ(busy.ts が録音中かをファイルへ書き出すため)。 */
+  declare onChange: () => void;
+  constructor({ client, baseDir, onChange }: Pick<RecordingOptions, 'client' | 'baseDir'> & { onChange?: () => void }) {
     this.client = client;
     this.baseDir = baseDir;
     /** guildId -> session */
     this.byGuild = new Map();
+    this.onChange = onChange ?? (() => {});
   }
 
   get(guildId: string) {
@@ -453,10 +456,13 @@ export class SessionManager {
       resolveName,
     });
     this.byGuild.set(guildId, session);
+    // VC 接続の完了を待つ前に知らせる。接続中もデプロイの再起動を避けたいため。
+    this.onChange();
     try {
       await session.start();
     } catch (err) {
       this.byGuild.delete(guildId);
+      this.onChange();
       throw err;
     }
     return session;
@@ -470,6 +476,7 @@ export class SessionManager {
     // トレードオフ: session.stop() が途中で失敗した場合も登録解除済みのため
     // /rec stop でのリトライはできない(PCM はディスクに残るので手動復旧は可能)。
     this.byGuild.delete(guildId);
+    this.onChange();
     const summary = await session.stop();
     const tracks = await session.listTracks();
     return { summary, tracks, session };
