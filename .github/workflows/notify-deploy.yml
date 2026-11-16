@@ -1,0 +1,37 @@
+# main の ci(統合ゲート)が push で成功したら、作者の本番デプロイ(別の private repo)を起動する。
+#
+# デプロイ本体を公開 repo に置かないのは、Actions のログ(アプリ名・URL・録音中の待機状況)を公開しないため。
+# ここで起動するだけで、デプロイ先の情報はこの repo に一切ない。fork や本家以外では何もしない。
+#
+# 必要な設定(本家のみ): Environment「deploy-dispatch」(Deployment branches: main)に DEPLOY_DISPATCH_TOKEN。
+#   fine-grained PAT。対象はデプロイ用 repo だけ、権限は Actions: Read and write だけ。
+#   デプロイ側でも「公開 main の先端」かつ「そのコミットで ci 成功」を確かめてから出す。
+name: notify-deploy
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  notify:
+    if: >-
+      github.repository == 'somasekimoto/discord-vc-record' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    environment: deploy-dispatch
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch the deploy workflow
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          test -n "$GH_TOKEN" || { echo "DEPLOY_DISPATCH_TOKEN is not set" >&2; exit 1; }
+          gh api -X POST repos/somasekimoto/discord-vc-record-deploy/actions/workflows/deploy.yml/dispatches \
+            -f ref=main -f 'inputs[target]=auto' -f "inputs[sha]=$SHA" > /dev/null
+          echo "dispatched"

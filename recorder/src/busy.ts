@@ -1,7 +1,7 @@
 /**
  * busy.ts — 録音中・文字起こし中かどうかをファイルに書き出す。
  *
- * 自動デプロイ(.github/workflows/deploy.yml → scripts/wait-recorder-idle.sh)は再起動の前に
+ * デプロイ(scripts/wait-recorder-idle.sh)は再起動の前に
  * このファイルを読み、sessions と pipelines が両方 0 になるまで待つ。再起動すると録音が止まり、
  * 文字起こし途中の pipeline も失われるため。ファイルが無いとき(この仕組みを持たない旧版)は
  * スクリプト側が録音ファイルの開き具合と更新時刻で代わりに判定する。
