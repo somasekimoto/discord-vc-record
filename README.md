@@ -193,9 +193,16 @@ flyctl deploy --ha=false --app <your-app>
 
 再デプロイで recorder が再起動すると、録音中・文字起こし中の処理は止まる。recorder は録音セッション数と文字起こし数を `/tmp/recorder-busy.json`（`src/busy.ts`）に書き出しているので、デプロイの前に `scripts/wait-recorder-idle.sh` で両方 0 になるまで待てる。
 
+スクリプトには `flyctl`・`jq`・GNU `timeout` が要る（macOS は `brew install coreutils jq` のうえ `$(brew --prefix coreutils)/libexec/gnubin` を PATH に入れる）。どれかが無いと状態を読めず、busy 扱いのまま最大待ち時間まで待ち続ける。
+
+イメージのビルド（`@discordjs/opus` のネイティブビルドで数分かかる）は待つ前に済ませ、待ち終わったらすぐ切り替える。待った後にビルドすると、その間に始まった録音が再起動で切れる。
+
 ```bash
-FLY_API_TOKEN=... scripts/wait-recorder-idle.sh <your-app> 10800   # 最大 3 時間待つ
-cd recorder && flyctl deploy --ha=false --app <your-app>
+cd recorder
+label="manual-$(date +%Y%m%d%H%M%S)"
+flyctl deploy --remote-only --build-only --push --image-label "$label" --app <your-app>
+FLY_API_TOKEN=... ../scripts/wait-recorder-idle.sh <your-app> 10800   # 最大 3 時間待つ
+flyctl deploy --ha=false --image "registry.fly.io/<your-app>:$label" --app <your-app>
 ```
 
 作者の本番は、別の private repo の CD が main の `ci` 成功後にこの手順で自動デプロイしている（`.github/workflows/notify-deploy.yml` が起動するだけで、デプロイ先の情報はこの repo に無い。fork では動かない）。
