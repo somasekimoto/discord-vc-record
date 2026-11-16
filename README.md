@@ -198,11 +198,12 @@ flyctl deploy --ha=false --app <your-app>
 イメージのビルド（`@discordjs/opus` のネイティブビルドで数分かかる）は待つ前に済ませ、待ち終わったらすぐ切り替える。待った後にビルドすると、その間に始まった録音が再起動で切れる。
 
 ```bash
-cd recorder
-label="manual-$(date +%Y%m%d%H%M%S)"
-flyctl deploy --remote-only --build-only --push --image-label "$label" --app <your-app>
-FLY_API_TOKEN=... ../scripts/wait-recorder-idle.sh <your-app> 10800   # 最大 3 時間待つ
-flyctl deploy --ha=false --image "registry.fly.io/<your-app>:$label" --app <your-app>
+# ビルド・待機のどちらかが失敗したら(busy のまま時間切れを含む)切り替えない
+cd recorder &&
+  label="manual-$(date +%Y%m%d%H%M%S)" &&
+  flyctl deploy --remote-only --build-only --push --image-label "$label" --app <your-app> &&
+  FLY_API_TOKEN=... ../scripts/wait-recorder-idle.sh <your-app> 10800 &&   # 最大 3 時間待つ
+  flyctl deploy --ha=false --image "registry.fly.io/<your-app>:$label" --app <your-app>
 ```
 
 作者の本番は、別の private repo の CD が main の `ci` 成功後にこの手順で自動デプロイしている（`.github/workflows/notify-deploy.yml` が起動するだけで、デプロイ先の情報はこの repo に無い。fork では動かない）。
