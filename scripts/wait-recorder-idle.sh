@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 自動デプロイ用: recorder が録音中・文字起こし中でなくなるまで待つ。
+# デプロイ前に、recorder が録音中・文字起こし中でなくなるまで待つ。
 #   使い方: wait-recorder-idle.sh <fly-app> [最大待ち秒数=10800]
 #   必要: flyctl、GNU timeout、FLY_API_TOKEN(アプリ限定のデプロイトークン)
 #

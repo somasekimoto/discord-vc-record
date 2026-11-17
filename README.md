@@ -206,8 +206,6 @@ cd recorder &&
   flyctl deploy --ha=false --image "registry.fly.io/<your-app>:$label" --app <your-app>
 ```
 
-作者の本番は、別の private repo の CD が main の `ci` 成功後にこの手順で自動デプロイしている（`.github/workflows/notify-deploy.yml` が起動するだけで、デプロイ先の情報はこの repo に無い。fork では動かない）。
-
 > ⚠ recorder は **単一インスタンス必須**（`--ha=false`）。複数だと同じVCを二重録音する。
 
 > ⚠ メモリは **2GB 以上**（`fly.toml` の `[[vm]] memory = "2048mb"`）。1〜2時間の録音は

@@ -39,7 +39,7 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
 });
 
-// 自動デプロイが「録音中・文字起こし中なら再起動を待つ」ために読む(busy.ts)。
+// デプロイ時に「録音中・文字起こし中なら再起動を待つ」ために読む(busy.ts、scripts/wait-recorder-idle.sh)。
 // sessions より先に作り、録音の登録・解除のたびに書き出す。
 const busy = new BusyTracker({ path: process.env.BUSY_FILE ?? DEFAULT_BUSY_FILE, countSessions: () => sessions.byGuild.size });
 const sessions = new SessionManager({ client, baseDir: RECORDINGS_DIR, onChange: () => busy.write() });
