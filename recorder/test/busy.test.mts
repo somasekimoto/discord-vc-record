@@ -1,5 +1,5 @@
 /**
- * BusyTracker: 自動デプロイが「録音中・文字起こし中は再起動しない」と判断する材料。
+ * BusyTracker: デプロイ前の待機(scripts/wait-recorder-idle.sh)が「録音中・文字起こし中は再起動しない」と判断する材料。
  */
 import { expect, onTestFinished, test, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
