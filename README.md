@@ -189,6 +189,23 @@ flyctl volumes create vc_data --region nrt --size 10 --app <your-app>
 flyctl deploy --ha=false --app <your-app>
 ```
 
+### 録音中の再デプロイを避ける
+
+再デプロイで recorder が再起動すると、録音中・文字起こし中の処理は止まる。recorder は録音セッション数と文字起こし数を `/tmp/recorder-busy.json`（`src/busy.ts`）に書き出しているので、デプロイの前に `scripts/wait-recorder-idle.sh` で両方 0 になるまで待てる。
+
+スクリプトには `flyctl`・`jq`・GNU `timeout` が要る（macOS は `brew install coreutils jq` のうえ `$(brew --prefix coreutils)/libexec/gnubin` を PATH に入れる）。どれかが無いと状態を読めず、busy 扱いのまま最大待ち時間まで待ち続ける。
+
+イメージのビルド（`@discordjs/opus` のネイティブビルドで数分かかる）は待つ前に済ませ、待ち終わったらすぐ切り替える。待った後にビルドすると、その間に始まった録音が再起動で切れる。
+
+```bash
+# ビルド・待機のどちらかが失敗したら(busy のまま時間切れを含む)切り替えない
+cd recorder &&
+  label="manual-$(date +%Y%m%d%H%M%S)" &&
+  flyctl deploy --remote-only --build-only --push --image-label "$label" --app <your-app> &&
+  FLY_API_TOKEN=... ../scripts/wait-recorder-idle.sh <your-app> 10800 &&   # 最大 3 時間待つ
+  flyctl deploy --ha=false --image "registry.fly.io/<your-app>:$label" --app <your-app>
+```
+
 > ⚠ recorder は **単一インスタンス必須**（`--ha=false`）。複数だと同じVCを二重録音する。
 
 > ⚠ メモリは **2GB 以上**（`fly.toml` の `[[vm]] memory = "2048mb"`）。1〜2時間の録音は
