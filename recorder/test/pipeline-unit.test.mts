@@ -1,9 +1,9 @@
 /**
  * pipeline の純粋関数のユニットテスト:
- * 発話区間の結合・短小除去(mergeUtterances)とタイムスタンプ整形(fmtOffset)。
+ * 発話区間の結合・短小除去(mergeUtterances)とタイムスタンプ整形(fmtOffset/fmtClock)。
  */
-import { expect, test } from 'vitest';
-import { mergeUtterances, fmtOffset } from '../src/pipeline.ts';
+import { afterEach, expect, test } from 'vitest';
+import { mergeUtterances, fmtOffset, fmtClock } from '../src/pipeline.ts';
 import { BYTES_PER_SEC } from './helpers.mts';
 
 // 1秒 = BYTES_PER_SEC。読みやすいようにヘルパーで組む
@@ -85,4 +85,32 @@ test('fmtOffset: 1時間以上は h:mm:ss', () => {
 
 test('fmtOffset: 負値は 0:00 に丸める', () => {
   expect(fmtOffset(-500)).toBe('0:00');
+});
+
+test('fmtClock: null は空文字', () => {
+  expect(fmtClock(null)).toBe('');
+});
+
+const ORIGINAL_TZ = process.env.TZ;
+afterEach(() => {
+  if (ORIGINAL_TZ === undefined) delete process.env.TZ;
+  else process.env.TZ = ORIGINAL_TZ;
+});
+
+test('fmtClock: サーバーのTZがUTCでもJSTのHH:MMを返す', () => {
+  process.env.TZ = 'UTC';
+  // 2024-01-01T20:05:00Z = 2024-01-02 05:05 JST
+  expect(fmtClock(Date.parse('2024-01-01T20:05:00Z'))).toBe('05:05');
+});
+
+test('fmtClock: サーバーのTZが米国でもJSTのHH:MMを返す', () => {
+  process.env.TZ = 'America/Los_Angeles';
+  // 2024-01-01T20:05:00Z = 2024-01-02 05:05 JST
+  expect(fmtClock(Date.parse('2024-01-01T20:05:00Z'))).toBe('05:05');
+});
+
+test('fmtClock: JSTで日付をまたぐ深夜0時台も 00:MM になる(24:MM にならない)', () => {
+  process.env.TZ = 'UTC';
+  // 2023-12-31T15:00:00Z = 2024-01-01 00:00 JST
+  expect(fmtClock(Date.parse('2023-12-31T15:00:00Z'))).toBe('00:00');
 });

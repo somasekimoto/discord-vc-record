@@ -57,11 +57,19 @@ async function cutSegment(srcWav: string, outPath: string, startSec: number, dur
   await ffmpeg(['-ss', startSec.toFixed(3), '-t', durSec.toFixed(3), '-i', srcWav, outPath]);
 }
 
-function fmtClock(ms: number | null) {
+// サーバーの TZ 設定(Fly.io の既定は UTC)に関わらず、議事録ヘッダーは常にJSTで表示する。
+const CLOCK_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'Asia/Tokyo',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+
+export function fmtClock(ms: number | null) {
   if (ms == null) return '';
-  const d = new Date(ms);
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
+  const parts = CLOCK_FORMATTER.formatToParts(new Date(ms));
+  const hh = parts.find((p) => p.type === 'hour')?.value ?? '00';
+  const mm = parts.find((p) => p.type === 'minute')?.value ?? '00';
   return `${hh}:${mm}`;
 }
 
