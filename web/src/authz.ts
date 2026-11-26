@@ -45,7 +45,9 @@ export async function canAccessGuild(session: SessionPayload | null, guildId: st
   if (res.status === 401) result = { allowed: false, reason: 'token_expired' };
   else if (res.status === 404) result = { allowed: false, reason: 'not_a_member' };
   else if (res.status === 429) {
-    // レート制限。キャッシュせず、直前の成功判定があればそれを使う(なければ rate_limited)。
+    // レート制限。キャッシュは更新せず、期限切れでも直前の成功判定があればそれを使う(なければ rate_limited)。
+    // 古い拒否判定は使わない(ロール付与や再ログインの後も missing_role / token_expired を出し続けるため)。
+    if (hit?.allowed) return { allowed: true };
     return { allowed: false, reason: 'rate_limited' };
   } else if (!res.ok) result = { allowed: false, reason: `discord_error_${res.status}` };
   else {

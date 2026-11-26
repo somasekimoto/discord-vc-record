@@ -131,6 +131,27 @@ test('認可: 未ログイン、未設定、member/role 不一致、401/404/429 
   }
 });
 
+test('認可: 期限切れキャッシュ中の429は直前の判定にフォールバックする', async () => {
+  await seed('9107');
+  const allowed = await access('guild=9107');
+  expect(allowed.allowed).toBe(true);
+  await request('/__test/clock?offset=300001');
+  try {
+    const limited = await access('guild=9107&token=status-429');
+    expect(limited.allowed).toBe(true);
+    expect(limited.reason).toBeUndefined();
+    expect(limited.discordCalls).toBe(Number(allowed.discordCalls) + 1); // 429 自体はキャッシュを更新しない
+    const limitedAgain = await access('guild=9107&token=status-429');
+    expect(limitedAgain.allowed).toBe(true); // 直前の判定へのフォールバックは繰り返し効く
+    expect(limitedAgain.discordCalls).toBe(Number(limited.discordCalls) + 1);
+  } finally {
+    await request('/__test/clock?offset=0');
+  }
+  await seed('9108');
+  const noFallback = await access('guild=9108&token=status-429');
+  expect(noFallback.reason).toBe('rate_limited'); // 直前の判定が無ければ従来通り
+});
+
 test('config と匿名/不明ルートのHTTP契約', async () => {
   expect((await request('/config', { method: 'POST', body: '{}' })).status).toBe(401);
   expect((await request('/config', { method: 'POST', headers: auth, body: '{}' })).status).toBe(400);
